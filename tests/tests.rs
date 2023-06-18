@@ -1,62 +1,17 @@
 use core::marker::PhantomData;
 
 use distrib::{
-    DataHolder, Plan, PlanHolder, PlanRealData, PlanRealDataHolders, PrdInner, PrdTypes, Real,
-    RealHolder,
+    Cost, DataHolder, Plan, PlanHolder, PlanRealData, PlanRealDataHolders, PrdInner, PrdTypes,
+    Real, RealHolder,
 };
 
 extern crate alloc;
-
-// #[derive(Track)]
-// #[track_data]
-//struct MyResult {}
-//impl Tracked for MyResult {}
-
-/*impl Track<MyResult> {
-    fn f() {}
-}*/
-
-pub trait TrackChildT<T> {
-    fn p(&self) -> T {
-        loop {}
-    }
-}
-
-// USER + generated?
-/// - `P`: Plan
-/// - `R`: incoming main parameter & outcoming result (in Process mode).
-pub struct Tct<P: Plan, D: Send + Sized> {
-    _p: PhantomData<P>,
-    _r: PhantomData<D>,
-}
-// USER:
-impl<P: Plan, D: Send + Sized> TrackChildT<D> for Tct<P, D> {}
-
-// generated:
-/*impl<P: Plan, R: Real, D: Send + Sized> TrackT<P, R, D> for Tct<P, D> {
-    fn process_t(&self) -> D {
-        self.p()
-        // OR (if we need to disambiguate):
-        //
-        // <Self as TrackChildT<T>>::p(self)
-    }
-}*/
-
-impl<P: Plan, D: Send + Sized> Tct<P, D> {
-    // How do I eliminate `T` data/size from being used in Plan mode, yet have the client code use
-    // `T` without extra typecasting and extra cost?
-    pub fn plan_or_process(self) -> Self {
-        self
-    }
-}
-//-----------------
 
 pub struct Processing<P: Plan, R: Real, PRDHS: PlanRealDataHolders<P, R>> {
     _p: PhantomData<P>,
     _r: PhantomData<R>,
     _prdh: PhantomData<PRDHS>,
 }
-//impl<P: Plan, R: Real, PRDH: PlanRealDataHolders<P, R>> Processing<P, R, PRDH> {}
 
 pub fn to_uppercase_f<P: Plan, R: Real, PRDHS: PlanRealDataHolders<P, R>>(
     prd: PrdInner<P, R, PRDHS, &str>,
@@ -73,8 +28,10 @@ pub fn to_uppercase_f<P: Plan, R: Real, PRDHS: PlanRealDataHolders<P, R>>(
 }
 
 distrib::generate_prd_struct!(pub, , pub); // OK
-                                           // distrib::generate_prd_struct!(pub, , ); -- NOT OK!
-                                           //distrib::generate_prd_struct!(pub, , , Prd); // OK
+
+// distrib::generate_prd_struct!(pub, , ); -- NOT OK!
+//
+//distrib::generate_prd_struct!(pub, , , Prd); // OK
 
 pub fn to_uppercase_g<PTS: PrdTypes>(prd: Prd<PTS, &str>) -> Prd<PTS, String> {
     if prd.being_planned() {
@@ -144,10 +101,22 @@ distrib::generate_prd_base_proxies!();
 
 impl<PTS: PrdTypes> PrdVec<PTS, u8> {
     pub fn inc(self) -> PrdVec<PTS, u8> {
-        self.map(|v| v + 1)
+        self.map_leaf_uniform(
+            |v| v + 1,
+            Cost {
+                cpu: 1.0,
+                ..Cost::default()
+            },
+        )
     }
     pub fn prefix(self, prefix: &str) -> PrdVec<PTS, String> {
-        self.map(|v| format!("{prefix}{v}"))
+        self.map_leaf_uniform(
+            |v| format!("{prefix}{v}"),
+            Cost {
+                cpu: 1.0,
+                ..Cost::default()
+            },
+        )
     }
 }
 
@@ -190,5 +159,3 @@ pub trait T {
         loop {}
     }
 }
-
-//impl <P: Plan, R: Real, PRDH: PlanRealDataHolders<P, R>> Prd<P, R, PRDH, S> {}

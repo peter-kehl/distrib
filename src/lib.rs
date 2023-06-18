@@ -104,11 +104,25 @@ pub trait DataHolder<D: Send + Sized>: Send + Sized {
     }
 }
 pub trait CostTable: Send + Sized {
+    /// Indicates that we need only basic [Cost] object.
+    fn using_basic_mut(&mut self) {
+        unsupported!()
+    }
     fn cost_basic_mut(&mut self) -> &mut Cost {
+        unsupported!()
+    }
+
+    /// Indicates that we need the second [Cost] object, too.
+    fn using_second_mut(&mut self) {
         unsupported!()
     }
     /// Only if supported.
     fn cost_second_mut(&mut self) -> &mut Cost {
+        unsupported!()
+    }
+
+    /// Indicates that we need the third [Cost] object, too.
+    fn using_third_mut(&mut self) {
         unsupported!()
     }
     /// Only if supported.
@@ -424,6 +438,10 @@ macro_rules! generate_prd_struct_aliases {
 }
 
 generate_prd_struct_aliases!(pub, PrdBase);
+// @TODO if we want the following, then add an extra generic type param to Prd, store it in a
+// phantom (and here, pass T for it; in existing solutions pass an empty tuple () for it).
+//
+//type PrdBaseIter<PTS, T, I: Iterator<Item = T>> = PrdBase<PTS, I>;
 
 fn empty_vec<T>() -> Vec<T> {
     Vec::with_capacity(0)
@@ -438,7 +456,7 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
             let (plan, cost_table, data) = self.plan_cost_table_data_moved();
             // @TODO Storage ops: If continuous input & from a sequential source, amortize access
             // time.
-
+            //
             // RAM cost: We sum both the output AND *input* data (since input may be larger).
 
             PrdBaseVec::from_plan_cost_table_data(plan, cost_table, empty_vec())
@@ -451,7 +469,7 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
         }
     }
 
-    pub fn map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R>(
+    pub fn vec_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R>(
         self,
         each: F,
         cost_holder_each: <<PTS as PrdTypes>::PRDHS as PlanRealDataHolders<
@@ -464,7 +482,7 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
             let (plan, cost_holder, data) = self.plan_cost_holder_data_moved();
             // @TODO Storage ops: If continuous input & from a sequential source, amortize access
             // time.
-
+            //
             // RAM cost: We sum both the output AND *input* data (since input may be larger).
 
             PrdBaseVec::from_plan_cost_holder_data(plan, cost_holder, empty_vec())
@@ -474,6 +492,66 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
             let mut result = Vec::with_capacity(data.len());
             result.extend(data.into_iter().map(each));
             PrdBaseVec::from_real_data(real, result)
+        }
+    }
+}
+
+pub struct SkippableIterator<T: Send, I: Iterator<Item = T> + Send> {
+    iter: I,
+    /// If true, then we do NOT access `iter`, but act as empty.
+    empty: bool,
+}
+impl<T: Send, I: Iterator<Item = T> + Send> Iterator for SkippableIterator<T, I> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.empty {
+            None
+        } else {
+            self.iter.next()
+        }
+    }
+}
+impl<T: Send, I: Iterator<Item = T> + Send> SkippableIterator<T, I> {
+    pub fn new(iter: I, empty: bool) -> Self {
+        Self { iter, empty }
+    }
+    pub fn new_pass_through(iter: I) -> Self {
+        Self::new(iter, false)
+    }
+    pub fn new_skip(iter: I) -> Self {
+        Self::new(iter, true)
+    }
+}
+
+impl<PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> PrdBase<PTS, I> {
+    pub fn iter_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R + Send>(
+        self,
+        each: F,
+        cost_holder_each: <<PTS as PrdTypes>::PRDHS as PlanRealDataHolders<
+            PTS::P,
+            PTS::R,
+            PTS::CT,
+        >>::COST,
+    ) -> PrdBase<PTS, impl Iterator<Item = R> + Send> {
+        if self.being_planned() {
+            let (plan, cost_holder, data) = self.plan_cost_holder_data_moved();
+            // @TODO Storage ops: If continuous input & from a sequential source, amortize access
+            // time.
+            //
+            // RAM cost: We sum both the output AND *input* data (since input may be larger).
+            let mut result_to_skip = data.into_iter().map(each);
+
+            PrdBase::from_plan_cost_holder_data(
+                plan,
+                cost_holder,
+                SkippableIterator::new_skip(result_to_skip),
+            )
+        } else {
+            let (real, data) = self.real_data_moved();
+
+            let mut result = data.into_iter().map(each);
+            PrdBase::from_real_data(real, SkippableIterator::new_pass_through(result))
         }
     }
 }
@@ -504,7 +582,7 @@ macro_rules! generate_prd_base_proxies {
                     .into()
             }
 
-            $vis fn map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
+            $vis fn vec_map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
             F: ::core::ops::Fn(T) -> R>(
                 self, each: F,
                 cost_holder_each: <<PTS as $crate::PrdTypes>::PRDHS as $crate::PlanRealDataHolders<
@@ -514,7 +592,7 @@ macro_rules! generate_prd_base_proxies {
             >>::COST
             ) -> $struct_name<PTS, ::alloc::vec::Vec<R>> {
                 $crate::PrdBaseVec::<PTS, T>::from(self.inner())
-                    .map_leaf_uniform_cost_holder(each, cost_holder_each)
+                    .vec_map_leaf_uniform_cost_holder(each, cost_holder_each)
                     .inner()
                     .into()
             }

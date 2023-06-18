@@ -115,7 +115,26 @@ impl<PTS: PrdTypes> PrdVec<PTS, u8> {
             },
         )
     }
-    pub fn prefix_through_holder(self, prefix: &str) -> PrdVec<PTS, String> {
+    pub fn vec_prefix_through_holder(self, prefix: &str) -> PrdVec<PTS, String> {
+        let being_planned = self.being_planned();
+        self.vec_map_leaf_uniform_cost_holder(
+            |v| format!("{prefix}{v}"),
+            if being_planned {
+                //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::from_cost(
+                <PTS_COST<PTS>>::from_cost(Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                })
+            } else {
+                //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::empty()
+                <PTS_COST<PTS>>::empty()
+            },
+        )
+    }
+}
+
+/*impl <PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> Prd<PTS, I> {
+    pub fn iter_prefix_through_holder(self, prefix: &str) -> Prd<PTS, impl Iterator<Item = String>> {
         let being_planned = self.being_planned();
         self.map_leaf_uniform_cost_holder(
             |v| format!("{prefix}{v}"),
@@ -131,7 +150,7 @@ impl<PTS: PrdTypes> PrdVec<PTS, u8> {
             },
         )
     }
-}
+}*/
 
 pub fn instantiate_outside_struct<PTS: PrdTypes>() {
     #[allow(unreachable_code)]

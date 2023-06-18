@@ -1,24 +1,18 @@
 use core::marker::PhantomData;
 
 use distrib::{
-    Cost, DataHolder, Plan, PlanHolder, PlanRealData, PlanRealDataHolders, PrdInner, PrdTypes,
-    Real, RealHolder,
+    Cost, CostHolder, CostTable, DataHolder, Plan, PlanHolder, PlanRealData, PlanRealDataHolders,
+    PrdInner, PrdTypes, Real, RealHolder,
 };
 
 extern crate alloc;
 
-pub struct Processing<P: Plan, R: Real, PRDHS: PlanRealDataHolders<P, R>> {
-    _p: PhantomData<P>,
-    _r: PhantomData<R>,
-    _prdh: PhantomData<PRDHS>,
-}
-
-pub fn to_uppercase_f<P: Plan, R: Real, PRDHS: PlanRealDataHolders<P, R>>(
-    prd: PrdInner<P, R, PRDHS, &str>,
-) -> PrdInner<P, R, PRDHS, String> {
+pub fn to_uppercase_f<P: Plan, R: Real, CT: CostTable, PRDHS: PlanRealDataHolders<P, R, CT>>(
+    prd: PrdInner<P, R, CT, PRDHS, &str>,
+) -> PrdInner<P, R, CT, PRDHS, String> {
     if prd.is_plan() {
         // plan
-        let (plan, data) = prd.plan_data_moved();
+        let (plan, cost_table, data) = prd.plan_cost_table_data_moved();
         // Copy of the original code
     } else {
         let (real, data) = prd.real_data_moved();
@@ -36,7 +30,7 @@ distrib::generate_prd_struct!(pub, , pub); // OK
 pub fn to_uppercase_g<PTS: PrdTypes>(prd: Prd<PTS, &str>) -> Prd<PTS, String> {
     if prd.being_planned() {
         // plan -> update/add to Plan
-        let (plan, data) = prd.plan_data_moved();
+        let (plan, cost_table, data) = prd.plan_cost_table_data_moved();
         // Copy of the original code, OR adjust manually
     } else {
         // execute & collect Real costs
@@ -50,7 +44,7 @@ impl<PTS: PrdTypes> Prd<PTS, &str> {
     pub fn to_uppercase(self) -> Prd<PTS, String> {
         if self.being_planned() {
             // plan
-            let (plan, data) = self.plan_data_moved();
+            let (plan, cost_table, data) = self.plan_cost_table_data_moved();
             // Copy of the original code
         } else {
             let (real, data) = self.real_data_moved();
@@ -64,7 +58,7 @@ impl<PTS: PrdTypes> Prd<PTS, String> {
     pub fn to_uppercase(self) -> Prd<PTS, String> {
         if self.being_planned() {
             // plan
-            let (plan, data) = self.plan_data_moved();
+            let (plan, cost_table, data) = self.plan_cost_table_data_moved();
             // Copy of the original code
         } else {
             let (real, data) = self.real_data_moved();
@@ -78,7 +72,7 @@ impl<PTS: PrdTypes> Prd<PTS, Vec<u8>> {
     pub fn to_word(self) -> Prd<PTS, String> {
         if self.being_planned() {
             // plan
-            let (plan, data) = self.plan_data_moved();
+            let (plan, cost_table, data) = self.plan_cost_table_data_moved();
             // Copy of the original code
         } else {
             let (real, data) = self.real_data_moved();
@@ -100,10 +94,16 @@ distrib::generate_prd_struct_aliases!(pub, Prd);
 distrib::generate_prd_base_proxies!();
 const ZERO_COST: Cost = distrib::default_cost();
 
+// Fails:
+//
+//type PTS_COST<PTS> = <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST;
+#[allow(type_alias_bounds)]
+type PTS_COST<PTS: PrdTypes> = <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST;
+
 impl<PTS: PrdTypes> PrdVec<PTS, u8> {
-    pub fn inc(self) -> PrdVec<PTS, u8> {
+    pub fn inc_through_single_cost(self) -> PrdVec<PTS, u8> {
         let being_planned = self.being_planned();
-        self.map_leaf_uniform(
+        self.map_leaf_uniform_cost_obj(
             |v| v + 1,
             if being_planned {
                 Cost {
@@ -115,17 +115,19 @@ impl<PTS: PrdTypes> PrdVec<PTS, u8> {
             },
         )
     }
-    pub fn prefix(self, prefix: &str) -> PrdVec<PTS, String> {
+    pub fn prefix_through_holder(self, prefix: &str) -> PrdVec<PTS, String> {
         let being_planned = self.being_planned();
-        self.map_leaf_uniform(
+        self.map_leaf_uniform_cost_holder(
             |v| format!("{prefix}{v}"),
             if being_planned {
-                Cost {
+                //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::from_cost(
+                <PTS_COST<PTS>>::from_cost(Cost {
                     cpu: 1.0,
                     ..Cost::default()
-                }
+                })
             } else {
-                ZERO_COST
+                //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::empty()
+                <PTS_COST<PTS>>::empty()
             },
         )
     }
@@ -161,7 +163,7 @@ pub trait T {
     fn f(prd: Prd<Self::PTS, &str>) -> Prd<Self::PTS, String> {
         if prd.being_planned() {
             // plan
-            let (plan, data) = prd.plan_data_moved();
+            let (plan, cost_table, data) = prd.plan_cost_table_data_moved();
             // Copy of the original code
         } else {
             let (real, data) = prd.real_data_moved();

@@ -98,23 +98,34 @@ impl<PTS: PrdTypes> Prd<PTS, Vec<u8>> {
 
 distrib::generate_prd_struct_aliases!(pub, Prd);
 distrib::generate_prd_base_proxies!();
+const ZERO_COST: Cost = distrib::default_cost();
 
 impl<PTS: PrdTypes> PrdVec<PTS, u8> {
     pub fn inc(self) -> PrdVec<PTS, u8> {
+        let being_planned = self.being_planned();
         self.map_leaf_uniform(
             |v| v + 1,
-            Cost {
-                cpu: 1.0,
-                ..Cost::default()
+            if being_planned {
+                Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                }
+            } else {
+                ZERO_COST
             },
         )
     }
     pub fn prefix(self, prefix: &str) -> PrdVec<PTS, String> {
+        let being_planned = self.being_planned();
         self.map_leaf_uniform(
             |v| format!("{prefix}{v}"),
-            Cost {
-                cpu: 1.0,
-                ..Cost::default()
+            if being_planned {
+                Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                }
+            } else {
+                ZERO_COST
             },
         )
     }

@@ -10,6 +10,7 @@ pub trait Plan: Send + Sized {}
 /// Executed plan. It collects actual storage, bandwidth + latency, and computation costs.
 pub trait Real: Send + Sized {}
 
+#[derive(Clone, Copy)]
 pub struct Cost {
     pub ram: f32,
     pub cpu: f32,
@@ -20,7 +21,7 @@ pub struct Cost {
     pub reliability: f32,
 }
 impl Cost {
-    pub fn new(
+    pub const fn new(
         ram: f32,
         cpu: f32,
         storage: f32,
@@ -40,9 +41,13 @@ impl Cost {
         }
     }
 }
+#[inline]
+pub const fn default_cost() -> Cost {
+    Cost::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+}
 impl Default for Cost {
     fn default() -> Self {
-        Self::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        default_cost()
     }
 }
 unsafe impl Send for Cost {}
@@ -99,9 +104,10 @@ pub trait CostHolder: Send + Sized {
 }
 
 // @TODO relax Send + Sized?
-pub trait PlanRealDataHolders<P: Plan, R: Real>: Send + Sized {
+pub trait PlanRealDataHolders<P: Plan, R: Real/*, C: CostHolder*/>: Send + Sized {
     type PLAN: PlanHolder<P>;
     type REAL: RealHolder<R>;
+    //type COST: CostHolder;
 
     type DATA<D: Send + Sized>: DataHolder<D>;
 

@@ -5,6 +5,8 @@ use distrib::{
     RealHolder,
 };
 
+extern crate alloc;
+
 // #[derive(Track)]
 // #[track_data]
 //struct MyResult {}
@@ -137,13 +139,14 @@ impl<PTS: PrdTypes> Prd<PTS, Vec<u8>> {
     pub async fn f() {}
 }
 
+distrib::generate_prd_struct_aliases!(pub, Prd);
 distrib::generate_prd_base_proxies!();
 
-impl<PTS: PrdTypes> Prd<PTS, Vec<u8>> {
-    pub fn inc(self) -> Prd<PTS, Vec<u8>> {
+impl<PTS: PrdTypes> PrdVec<PTS, u8> {
+    pub fn inc(self) -> PrdVec<PTS, u8> {
         self.map(|v| v + 1)
     }
-    pub fn prefix(self, prefix: &str) -> Prd<PTS, Vec<String>> {
+    pub fn prefix(self, prefix: &str) -> PrdVec<PTS, String> {
         self.map(|v| format!("{prefix}{v}"))
     }
 }

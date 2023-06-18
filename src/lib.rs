@@ -1,6 +1,7 @@
 // https://blog.rust-lang.org/inside-rust/2023/05/03/stabilizing-async-fn-in-trait.html
 // https://rust-lang.github.io/rfcs/3185-static-async-fn-in-trait.html
 #![feature(async_fn_in_trait)]
+extern crate alloc;
 use core::marker::PhantomData;
 
 /// Type `T` **can** be large. It will NOT be used in planning mode, but in processing mode only.
@@ -244,7 +245,31 @@ macro_rules! generate_prd_struct {
 
 generate_prd_struct!(pub, pub, pub, PrdBase);
 
-pub type PrdBaseVec<PTS, T> = PrdBase<PTS, Vec<T>>;
+/// Generate `type` aliases, like `type XyzVec<PTS, T> = Xyz<PTS, Vec<T>>`, where `Xyz` is the name
+/// of the struct generated with [`generate_prd_struct`].
+///
+/// Params:
+/// - `vis` - visibility (otherwise private),
+/// - `struct_name` - the (existing) struct name (otherwise `Prd`).
+///
+/// This requires that you have `extern crate alloc;` at the top of your crate's `lib.rs`. That
+/// makes it `no_std`-friendly.
+#[macro_export]
+macro_rules! generate_prd_struct_aliases {
+    ($vis: vis, $struct_name:ident) => {
+        ::paste::paste! {
+            $vis type [<$struct_name Vec>]<PTS, T> = $struct_name<PTS, ::alloc::vec::Vec<T>>;
+        }
+    };
+    ($struct_name:ident) => {
+        $crate::generate_prd_struct_aliases!(, $struct_name);
+    };
+    () => {
+        $crate::generate_prd_struct_aliases!(, Prd);
+    }
+}
+
+generate_prd_struct_aliases!(pub, PrdBase);
 impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
     pub fn map<R: Send + Sized, F: Fn(T) -> R>(self, f: F) -> PrdBaseVec<PTS, R> {
         loop {}
@@ -254,13 +279,24 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
 /// Generates "proxy" `impl` for the given (user space) struct (which was generated with
 /// [`generate_prd_struct`]). These `impl` define functions that proxy to [`PrdBase`] (under its
 /// variations/type aliases, such as [`PrdBaseVec`]).
-// @TODO take param $struct_name - default to `Prd`.
+///
+/// Invoke [`generate_prd_struct_aliases`] first.
+///
+/// Params:
+/// - `vis` - visibility of the generated (proxy) methods (otherwise private),
+/// - `struct_name` - the (existing) struct name (otherwise `Prd`).
+///
+/// This requires that you have `extern crate alloc;` at the top of your crate's `lib.rs`. That
+/// makes it `no_std`-friendly.
 #[macro_export]
 macro_rules! generate_prd_base_proxies {
-    () => {
+    ($vis:vis, $struct_name:ident) => {
         // @TODO consider `paste` crate to generate `PrdVec`
-        impl<PTS: PrdTypes, T: Send + Sized> Prd<PTS, Vec<T>> {
-            pub fn map<R: Send + Sized, F: Fn(T) -> R>(self, f: F) -> Prd<PTS, Vec<R>> {
+        impl<PTS: $crate::PrdTypes, T: ::core::marker::Send + ::core::marker::Sized> $struct_name<PTS, ::alloc::vec::Vec<T>> {
+            $vis fn map<R: ::core::marker::Send + ::core::marker::Sized,
+            F: ::core::ops::Fn(T) -> R>(
+                self, f: F
+            ) -> $struct_name<PTS, ::alloc::vec::Vec<R>> {
                 $crate::PrdBaseVec::<PTS, T>::from(self.inner())
                     .map(f)
                     .inner()
@@ -268,6 +304,12 @@ macro_rules! generate_prd_base_proxies {
             }
         }
     };
+    ($struct_name:ident) => {
+        $crate::generate_prd_base_proxies!(, $struct_name);
+    };
+    () => {
+        $crate::generate_prd_base_proxies!(, Prd);
+    }
 }
 
 #[cfg(test)]

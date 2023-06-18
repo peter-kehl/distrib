@@ -438,10 +438,6 @@ macro_rules! generate_prd_struct_aliases {
 }
 
 generate_prd_struct_aliases!(pub, PrdBase);
-// @TODO if we want the following, then add an extra generic type param to Prd, store it in a
-// phantom (and here, pass T for it; in existing solutions pass an empty tuple () for it).
-//
-//type PrdBaseIter<PTS, T, I: Iterator<Item = T>> = PrdBase<PTS, I>;
 
 fn empty_vec<T>() -> Vec<T> {
     Vec::with_capacity(0)

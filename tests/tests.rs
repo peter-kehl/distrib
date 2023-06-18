@@ -71,8 +71,8 @@ pub fn to_uppercase_f<P: Plan, R: Real, PRDHS: PlanRealDataHolders<P, R>>(
 }
 
 distrib::generate_prd_struct!(pub, , pub); // OK
-// distrib::generate_prd_struct!(pub, , ); -- NOT OK!
-//distrib::generate_prd_struct!(pub, , , Prd); // OK
+                                           // distrib::generate_prd_struct!(pub, , ); -- NOT OK!
+                                           //distrib::generate_prd_struct!(pub, , , Prd); // OK
 
 pub fn to_uppercase_g<PTS: PrdTypes>(prd: Prd<PTS, &str>) -> Prd<PTS, String> {
     if prd.being_planned() {
@@ -137,20 +137,35 @@ impl<PTS: PrdTypes> Prd<PTS, Vec<u8>> {
     pub async fn f() {}
 }
 
+distrib::generate_prd_base_proxies!();
+
+impl<PTS: PrdTypes> Prd<PTS, Vec<u8>> {
+    pub fn inc(self) -> Prd<PTS, Vec<u8>> {
+        self.map(|v| v + 1)
+    }
+    pub fn prefix(self, prefix: &str) -> Prd<PTS, Vec<String>> {
+        self.map(|v| format!("{prefix}{v}"))
+    }
+}
+
 pub fn instantiate_outside_struct<PTS: PrdTypes>() {
     #[allow(unreachable_code)]
     let _prd = Prd::<PTS, u8>::new(loop {});
 }
+
 distrib::generate_prd_struct!(pub, , pub, Prd2);
+
 pub fn move_between_prds<PTS: PrdTypes>() {
     #[allow(unreachable_code)]
     let prd = Prd::<PTS, u8>::new(loop {});
     let prd2: Prd2<PTS, u8> = prd.inner.into();
     // OR the same the other way, but using .inner() method:
-    let _prd_again: Prd<PTS, u8> = prd2.inner().into();
+    let prd_again: Prd<PTS, u8> = prd2.inner().into();
+
+    let _prd2_again = Prd2::<PTS, u8>::from(prd_again.inner());
 }
 
-/// To avoid adding `<PTS: PrdTypes>` generic parameter to every function, we can workaround with a
+/// To avoid adding `<PTS: PrdTypes>` generic parameter to every function, we could workaround with a
 /// trait and have that `PTS` as an associated type of that trait.
 ///
 /// Any functions are implemented in the trait (as default implementations). Of course, you can add

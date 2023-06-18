@@ -242,6 +242,34 @@ macro_rules! generate_prd_struct {
     }
 }
 
+generate_prd_struct!(pub, pub, pub, PrdBase);
+
+pub type PrdBaseVec<PTS, T> = PrdBase<PTS, Vec<T>>;
+impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
+    pub fn map<R: Send + Sized, F: Fn(T) -> R>(self, f: F) -> PrdBaseVec<PTS, R> {
+        loop {}
+    }
+}
+
+/// Generates "proxy" `impl` for the given (user space) struct (which was generated with
+/// [`generate_prd_struct`]). These `impl` define functions that proxy to [`PrdBase`] (under its
+/// variations/type aliases, such as [`PrdBaseVec`]).
+// @TODO take param $struct_name - default to `Prd`.
+#[macro_export]
+macro_rules! generate_prd_base_proxies {
+    () => {
+        // @TODO consider `paste` crate to generate `PrdVec`
+        impl<PTS: PrdTypes, T: Send + Sized> Prd<PTS, Vec<T>> {
+            pub fn map<R: Send + Sized, F: Fn(T) -> R>(self, f: F) -> Prd<PTS, Vec<R>> {
+                $crate::PrdBaseVec::<PTS, T>::from(self.inner())
+                    .map(f)
+                    .inner()
+                    .into()
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

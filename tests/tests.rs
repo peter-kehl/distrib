@@ -1,4 +1,5 @@
 use core::marker::PhantomData;
+use std::fmt::Display;
 
 use distrib::{
     Cost, CostHolder, CostTable, DataHolder, Plan, PlanHolder, PlanRealData, PlanRealDataHolders,
@@ -94,14 +95,14 @@ distrib::generate_prd_struct_aliases!(pub, Prd);
 distrib::generate_prd_base_proxies!();
 const ZERO_COST: Cost = distrib::default_cost();
 
-// Fails:
+// @TODO report: Fails:
 //
 //type PTS_COST<PTS> = <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST;
 #[allow(type_alias_bounds)]
 type PTS_COST<PTS: PrdTypes> = <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST;
 
 impl<PTS: PrdTypes> PrdVec<PTS, u8> {
-    pub fn inc_through_single_cost(self) -> PrdVec<PTS, u8> {
+    pub fn vec_inc_through_single_cost(self) -> PrdVec<PTS, u8> {
         let being_planned = self.being_planned();
         self.map_leaf_uniform_cost_obj(
             |v| v + 1,
@@ -119,6 +120,30 @@ impl<PTS: PrdTypes> PrdVec<PTS, u8> {
         let being_planned = self.being_planned();
         self.vec_map_leaf_uniform_cost_holder(
             |v| format!("{prefix}{v}"),
+            if being_planned {
+                //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::from_cost(
+                <PTS_COST<PTS>>::from_cost(Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                })
+            } else {
+                //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::empty()
+                <PTS_COST<PTS>>::empty()
+            },
+        )
+    }
+}
+
+impl<'s, PTS: PrdTypes, T: Send + Sized + Display + 's, I: Iterator<Item = T> + Send + 's>
+    Prd<PTS, I>
+{
+    pub fn iter_map_prefix_through_holder(
+        self,
+        prefix: &'s str,
+    ) -> Prd<PTS, impl Iterator<Item = String> + Send + '_> {
+        let being_planned = self.being_planned();
+        self.iter_map_leaf_uniform_cost_holder(
+            move |v| format!("{prefix}{v}"),
             if being_planned {
                 //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::from_cost(
                 <PTS_COST<PTS>>::from_cost(Cost {

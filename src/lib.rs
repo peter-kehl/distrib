@@ -291,7 +291,7 @@ impl<P: Plan, R: Real, CT: CostTable, PRDHS: PlanRealDataHolders<P, R, CT>, D: S
     }
 }
 
-pub trait PrdTypes: Send + Sized {
+pub trait PrdTypes: Send + Sized + 'static {
     type P: Plan;
     type R: Real;
     type CT: CostTable;
@@ -492,16 +492,21 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
     }
 }
 
+/// Used as a result type from our iteration-processing functions, so a function can return an empty
+/// Iterator instead of a given one, yet have the same return type (closure/`impl`) in both cases.
+/// Since iterators are lazy, if instantiated with [`SkippableIterator::new_skip`] or
+/// [`SkippableIterator::new`] with argument `skip` being `true`, then the underlying Iterator is
+/// not advanced.
 pub struct SkippableIterator<T: Send, I: Iterator<Item = T> + Send> {
     iter: I,
     /// If true, then we do NOT access `iter`, but act as empty.
-    empty: bool,
+    skip: bool,
 }
 impl<T: Send, I: Iterator<Item = T> + Send> Iterator for SkippableIterator<T, I> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.empty {
+        if self.skip {
             None
         } else {
             self.iter.next()
@@ -509,8 +514,8 @@ impl<T: Send, I: Iterator<Item = T> + Send> Iterator for SkippableIterator<T, I>
     }
 }
 impl<T: Send, I: Iterator<Item = T> + Send> SkippableIterator<T, I> {
-    pub fn new(iter: I, empty: bool) -> Self {
-        Self { iter, empty }
+    pub fn new(iter: I, skip: bool) -> Self {
+        Self { iter, skip }
     }
     pub fn new_pass_through(iter: I) -> Self {
         Self::new(iter, false)
@@ -520,6 +525,13 @@ impl<T: Send, I: Iterator<Item = T> + Send> SkippableIterator<T, I> {
     }
 }
 
+// Can't have the following:
+//
+//type PrdBaseIter<PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> = PrdBase<PTS, I>;
+//
+// We can have the following, but it doesn't help much:
+//
+// type PrdBaseIter<PTS: PrdTypes, I: Iterator + Send> = PrdBase<PTS, I>;
 impl<PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> PrdBase<PTS, I> {
     pub fn iter_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R + Send>(
         self,
@@ -570,7 +582,7 @@ macro_rules! generate_prd_base_proxies {
         impl<PTS: $crate::PrdTypes, T: ::core::marker::Send + ::core::marker::Sized> $struct_name<PTS, ::alloc::vec::Vec<T>> {
             $vis fn map_leaf_uniform_cost_obj<R: ::core::marker::Send + ::core::marker::Sized,
             F: ::core::ops::Fn(T) -> R>(
-                self, each: F, cost_each: Cost
+                self, each: F, cost_each: $crate::Cost
             ) -> $struct_name<PTS, ::alloc::vec::Vec<R>> {
                 $crate::PrdBaseVec::<PTS, T>::from(self.inner())
                     .map_leaf_uniform_cost_obj(each, cost_each)
@@ -589,6 +601,27 @@ macro_rules! generate_prd_base_proxies {
             ) -> $struct_name<PTS, ::alloc::vec::Vec<R>> {
                 $crate::PrdBaseVec::<PTS, T>::from(self.inner())
                     .vec_map_leaf_uniform_cost_holder(each, cost_holder_each)
+                    .inner()
+                    .into()
+            }
+        }
+
+        impl<
+        PTS: $crate::PrdTypes,
+        T: ::core::marker::Send + ::core::marker::Sized,
+        I: ::core::iter::Iterator<Item = T> + ::core::marker::Send
+        >
+        $struct_name<PTS, I> {
+            $vis fn iter_map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
+            F: ::core::ops::Fn(T) -> R + ::core::marker::Send>(
+                self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes>::PRDHS as $crate::PlanRealDataHolders<
+                PTS::P,
+                PTS::R,
+                PTS::CT,
+            >>::COST
+            ) -> $struct_name<PTS, impl ::core::iter::Iterator<Item = R> + ::core::marker::Send> {
+                $crate::PrdBase::<PTS, I>::from(self.inner())
+                    .iter_map_leaf_uniform_cost_holder(each, cost_holder_each)
                     .inner()
                     .into()
             }

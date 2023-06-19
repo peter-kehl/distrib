@@ -1,9 +1,10 @@
-use core::marker::PhantomData;
+#![allow(unused_variables)]
+use core::borrow::Borrow;
 use std::fmt::Display;
 
 use distrib::{
-    Cost, CostHolder, CostTable, DataHolder, Plan, PlanHolder, PlanRealData, PlanRealDataHolders,
-    PrdInner, PrdTypes, Real, RealHolder,
+    Cost, CostHolder, CostTable, DataHolder, Plan, PlanHolder, PlanRealDataHolders, PrdInner,
+    PrdTypes, Real, RealHolder,
 };
 
 extern crate alloc;
@@ -87,8 +88,6 @@ impl<PTS: PrdTypes> Prd<PTS, Vec<u8>> {
     pub fn to_word_uppercase(self) -> Prd<PTS, String> {
         self.to_word().to_uppercase()
     }
-
-    pub async fn f() {}
 }
 
 distrib::generate_prd_struct_aliases!(pub, Prd);
@@ -99,11 +98,12 @@ const ZERO_COST: Cost = distrib::default_cost();
 //
 //type PTS_COST<PTS> = <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST;
 #[allow(type_alias_bounds)]
-type PTS_COST<PTS: PrdTypes> = <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST;
+type PtsCost<PTS: PrdTypes> = <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST;
 
 impl<PTS: PrdTypes> PrdVec<PTS, u8> {
     pub fn vec_inc_through_single_cost(self) -> PrdVec<PTS, u8> {
         let being_planned = self.being_planned();
+
         self.map_leaf_uniform_cost_obj(
             |v| v + 1,
             if being_planned {
@@ -116,45 +116,192 @@ impl<PTS: PrdTypes> PrdVec<PTS, u8> {
             },
         )
     }
-    pub fn vec_prefix_through_holder(self, prefix: &str) -> PrdVec<PTS, String> {
+    pub fn vec_prefix_cost_holder(self, prefix: &str) -> PrdVec<PTS, String> {
         let being_planned = self.being_planned();
+
         self.vec_map_leaf_uniform_cost_holder(
             |v| format!("{prefix}{v}"),
             if being_planned {
                 //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::from_cost(
-                <PTS_COST<PTS>>::from_cost(Cost {
+                <PtsCost<PTS>>::from_cost(Cost {
                     cpu: 1.0,
                     ..Cost::default()
                 })
             } else {
                 //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::empty()
-                <PTS_COST<PTS>>::empty()
+                <PtsCost<PTS>>::empty()
             },
         )
     }
 }
 
-impl<'s, PTS: PrdTypes, T: Send + Sized + Display + 's, I: Iterator<Item = T> + Send + 's>
-    Prd<PTS, I>
-{
-    pub fn iter_map_prefix_through_holder(
+impl<'s, PTS: PrdTypes + 's, I: Iterator<Item = &'s str> + Send + 's> Prd<PTS, I> {
+    pub fn iter_map_str_uppercase_cost_holder(
         self,
-        prefix: &'s str,
-    ) -> Prd<PTS, impl Iterator<Item = String> + Send + '_> {
+    ) -> Prd<PTS, impl Iterator<Item = String> + Send + 's> {
         let being_planned = self.being_planned();
+
         self.iter_map_leaf_uniform_cost_holder(
-            move |v| format!("{prefix}{v}"),
+            move |v| v.to_uppercase(),
             if being_planned {
-                //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::from_cost(
-                <PTS_COST<PTS>>::from_cost(Cost {
+                <PtsCost<PTS>>::from_cost(Cost {
                     cpu: 1.0,
                     ..Cost::default()
                 })
             } else {
-                //<PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT>>::COST::empty()
-                <PTS_COST<PTS>>::empty()
+                <PtsCost<PTS>>::empty()
             },
         )
+    }
+}
+
+/// [Into]`<&'s str>` doesn't work well, because we can't have an orphaned slice.
+///
+/// Instead, we use [Borrow]`<str>`. See [Prd::iter_map_borrow_str_uppercase_cost_holder].
+impl<'s, T: Into<&'s str> + Send, PTS: PrdTypes, I: Iterator<Item = T> + Send> Prd<PTS, I> {
+    pub fn iter_map_into_str_uppercase_cost_holder(
+        self,
+    ) -> Prd<PTS, impl Iterator<Item = String> + Send> {
+        if true {
+            unimplemented!("Easy to implement, but useless.");
+        }
+        let being_planned = self.being_planned();
+        self.iter_map_leaf_uniform_cost_holder(
+            move |v| v.into().to_uppercase(),
+            if being_planned {
+                <PtsCost<PTS>>::from_cost(Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                })
+            } else {
+                <PtsCost<PTS>>::empty()
+            },
+        )
+    }
+}
+
+impl<'s, T: Borrow<str> + Send, PTS: PrdTypes, I: Iterator<Item = T> + Send> Prd<PTS, I> {
+    pub fn iter_map_borrow_str_uppercase_cost_holder(
+        self,
+    ) -> Prd<PTS, impl Iterator<Item = String> + Send> {
+        let being_planned = self.being_planned();
+
+        self.iter_map_leaf_uniform_cost_holder(
+            move |v| v.borrow().to_uppercase(),
+            if being_planned {
+                <PtsCost<PTS>>::from_cost(Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                })
+            } else {
+                <PtsCost<PTS>>::empty()
+            },
+        )
+    }
+}
+
+impl<'s, T: Borrow<str> + Send, PTS: PrdTypes, I: ExactSizeIterator<Item = T> + Send> Prd<PTS, I> {
+    pub fn iter_exact_size_map_borrow_str_uppercase_cost_holder(
+        self,
+    ) -> Prd<PTS, impl ExactSizeIterator<Item = String> + Send> {
+        let being_planned = self.being_planned();
+
+        self.iter_exact_size_map_leaf_uniform_cost_holder_exact_size(
+            move |v| v.borrow().to_uppercase(),
+            if being_planned {
+                <PtsCost<PTS>>::from_cost(Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                })
+            } else {
+                <PtsCost<PTS>>::empty()
+            },
+        )
+    }
+}
+
+impl<T: Into<String> + Send, PTS: PrdTypes, I: Iterator<Item = T> + Send> Prd<PTS, I> {
+    pub fn iter_map_into_string_uppercase_cost_holder(
+        self,
+    ) -> Prd<PTS, impl Iterator<Item = String> + Send> {
+        let being_planned = self.being_planned();
+        self.iter_map_leaf_uniform_cost_holder(
+            move |v| v.into().to_uppercase(),
+            if being_planned {
+                <PtsCost<PTS>>::from_cost(Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                })
+            } else {
+                <PtsCost<PTS>>::empty()
+            },
+        )
+    }
+}
+
+impl<'s, PTS: PrdTypes + 's, T: Send + Sized + Display + 's, I: Iterator<Item = T> + Send + 's>
+    Prd<PTS, I>
+{
+    pub fn iter_map_prefix_cost_holder(
+        self,
+        prefix: &'s str,
+    ) -> Prd<PTS, impl Iterator<Item = String> + Send + 's> {
+        let being_planned = self.being_planned();
+        self.iter_map_leaf_uniform_cost_holder(
+            move |v| format!("{prefix}{v}"),
+            if being_planned {
+                <PtsCost<PTS>>::from_cost(Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                })
+            } else {
+                <PtsCost<PTS>>::empty()
+            },
+        )
+    }
+
+    /// Chained operations, with no intermediary storage.
+    pub fn iter_map_prefix_and_uppercase_cost_holder(
+        self,
+        prefix: &'s str,
+    ) -> Prd<PTS, impl Iterator<Item = String> + Send + 's> {
+        self.iter_map_prefix_cost_holder(prefix)
+            .iter_map_borrow_str_uppercase_cost_holder()
+    }
+}
+
+impl<
+        's,
+        PTS: PrdTypes + 's,
+        T: Send + Sized + Display + 's,
+        I: ExactSizeIterator<Item = T> + Send + 's,
+    > Prd<PTS, I>
+{
+    pub fn iter_exact_size_map_prefix_cost_holder(
+        self,
+        prefix: &'s str,
+    ) -> Prd<PTS, impl ExactSizeIterator<Item = String> + Send + 's> {
+        let being_planned = self.being_planned();
+        self.iter_exact_size_map_leaf_uniform_cost_holder_exact_size(
+            move |v| format!("{prefix}{v}"),
+            if being_planned {
+                <PtsCost<PTS>>::from_cost(Cost {
+                    cpu: 1.0,
+                    ..Cost::default()
+                })
+            } else {
+                <PtsCost<PTS>>::empty()
+            },
+        )
+    }
+
+    /// Chained operations, with no intermediary storage.
+    pub fn iter_exact_size_map_prefix_and_uppercase_cost_holder(
+        self,
+        prefix: &'s str,
+    ) -> Prd<PTS, impl ExactSizeIterator<Item = String> + Send + 's> {
+        self.iter_exact_size_map_prefix_cost_holder(prefix)
+            .iter_exact_size_map_borrow_str_uppercase_cost_holder()
     }
 }
 

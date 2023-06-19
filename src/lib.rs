@@ -1,6 +1,7 @@
 // https://blog.rust-lang.org/inside-rust/2023/05/03/stabilizing-async-fn-in-trait.html
 // https://rust-lang.github.io/rfcs/3185-static-async-fn-in-trait.html
-#![feature(async_fn_in_trait)]
+//#![feature(async_fn_in_trait)]
+#![allow(unused_variables)]
 extern crate alloc;
 use core::marker::PhantomData;
 
@@ -291,7 +292,7 @@ impl<P: Plan, R: Real, CT: CostTable, PRDHS: PlanRealDataHolders<P, R, CT>, D: S
     }
 }
 
-pub trait PrdTypes: Send + Sized + 'static {
+pub trait PrdTypes: Send + Sized {
     type P: Plan;
     type R: Real;
     type CT: CostTable;
@@ -497,12 +498,16 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
 /// Since iterators are lazy, if instantiated with [`SkippableIterator::new_skip`] or
 /// [`SkippableIterator::new`] with argument `skip` being `true`, then the underlying Iterator is
 /// not advanced.
-pub struct SkippableIterator<T: Send, I: Iterator<Item = T> + Send> {
+///
+/// If `I` is an [ExactSizeIterator], this implements [ExactSizeIterator], too. But, if skippable
+/// (if `skip` is `true`), then [ExactSizeIterator::len] returns the underlying `self.iter.len()`,
+/// even though `next()` returns [None].
+pub struct PhantomSizeSkippableIterator<T: Send, I: Iterator<Item = T> + Send> {
     iter: I,
     /// If true, then we do NOT access `iter`, but act as empty.
     skip: bool,
 }
-impl<T: Send, I: Iterator<Item = T> + Send> Iterator for SkippableIterator<T, I> {
+impl<T: Send, I: Iterator<Item = T> + Send> Iterator for PhantomSizeSkippableIterator<T, I> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -513,7 +518,16 @@ impl<T: Send, I: Iterator<Item = T> + Send> Iterator for SkippableIterator<T, I>
         }
     }
 }
-impl<T: Send, I: Iterator<Item = T> + Send> SkippableIterator<T, I> {
+/// We DO return the underlying size, even if we are skipping any items (if `skip` is `true`).
+impl<T: Send, I: ExactSizeIterator<Item = T> + Send> ExactSizeIterator
+    for PhantomSizeSkippableIterator<T, I>
+{
+    fn len(&self) -> usize {
+        self.iter.len()
+    }
+}
+
+impl<T: Send, I: Iterator<Item = T> + Send> PhantomSizeSkippableIterator<T, I> {
     pub fn new(iter: I, skip: bool) -> Self {
         Self { iter, skip }
     }
@@ -533,6 +547,7 @@ impl<T: Send, I: Iterator<Item = T> + Send> SkippableIterator<T, I> {
 //
 // type PrdBaseIter<PTS: PrdTypes, I: Iterator + Send> = PrdBase<PTS, I>;
 impl<PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> PrdBase<PTS, I> {
+    /// Used only if the iterator `I` is not an [ExactSizeIterator]. Otherwise use [PrdBase::iter_exact_size_map_leaf_uniform_cost_holder_exact_size], if possible (or [PrdBase::iter_exact_size_map_leaf_uniform_cost_holder] otherwise).
     pub fn iter_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R + Send>(
         self,
         each: F,
@@ -547,19 +562,102 @@ impl<PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> PrdBase<PTS, 
             // @TODO Storage ops: If continuous input & from a sequential source, amortize access
             // time.
             //
-            // RAM cost: We sum both the output AND *input* data (since input may be larger).
-            let mut result_to_skip = data.into_iter().map(each);
+            // @TODO RAM cost: We sum only the output.
+            //
+            // @TODO At the root level, sum the input data size, too.
+            let result_to_skip = data.into_iter().map(each);
 
             PrdBase::from_plan_cost_holder_data(
                 plan,
                 cost_holder,
-                SkippableIterator::new_skip(result_to_skip),
+                PhantomSizeSkippableIterator::new_skip(result_to_skip),
             )
         } else {
             let (real, data) = self.real_data_moved();
 
-            let mut result = data.into_iter().map(each);
-            PrdBase::from_real_data(real, SkippableIterator::new_pass_through(result))
+            let result = data.into_iter().map(each);
+
+            PrdBase::from_real_data(real, PhantomSizeSkippableIterator::new_pass_through(result))
+        }
+    }
+}
+
+impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdBase<PTS, I> {
+    /// For data sources with exact (known) size, but when the transformation generates an iterator
+    /// of an unknown/variable size.
+    ///
+    /// But, if the transformation is 1:1, use
+    /// [PrdBase::iter_exact_size_map_leaf_uniform_cost_holder_exact_size] instead.
+    pub fn iter_exact_size_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R + Send>(
+        self,
+        each: F,
+        cost_holder_each: <<PTS as PrdTypes>::PRDHS as PlanRealDataHolders<
+            PTS::P,
+            PTS::R,
+            PTS::CT,
+        >>::COST,
+    ) -> PrdBase<PTS, impl Iterator<Item = R> + Send> {
+        if self.being_planned() {
+            let (plan, cost_holder, data) = self.plan_cost_holder_data_moved();
+            // @TODO Storage ops: If continuous input & from a sequential source, amortize access
+            // time.
+            //
+            // @TODO RAM cost: We sum only the output.
+            //
+            // @TODO At the root level, sum the input data size, too.
+            let result_to_skip = data.into_iter().map(each);
+
+            PrdBase::from_plan_cost_holder_data(
+                plan,
+                cost_holder,
+                PhantomSizeSkippableIterator::new_skip(result_to_skip),
+            )
+        } else {
+            let (real, data) = self.real_data_moved();
+
+            let result = data.into_iter().map(each);
+
+            PrdBase::from_real_data(real, PhantomSizeSkippableIterator::new_pass_through(result))
+        }
+    }
+}
+
+impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdBase<PTS, I> {
+    /// For data sources with exact (known) size, and the transformation generates an iterator of a
+    /// known/exact size, too.
+    pub fn iter_exact_size_map_leaf_uniform_cost_holder_exact_size<
+        R: Send + Sized,
+        F: Fn(T) -> R + Send,
+    >(
+        self,
+        each: F,
+        cost_holder_each: <<PTS as PrdTypes>::PRDHS as PlanRealDataHolders<
+            PTS::P,
+            PTS::R,
+            PTS::CT,
+        >>::COST,
+    ) -> PrdBase<PTS, impl ExactSizeIterator<Item = R> + Send> {
+        if self.being_planned() {
+            let (plan, cost_holder, data) = self.plan_cost_holder_data_moved();
+            // @TODO Storage ops: If continuous input & from a sequential source, amortize access
+            // time.
+            //
+            // @TODO RAM cost: We sum only the output.
+            //
+            // @TODO At the root level, sum the input data size, too.
+            let result_to_skip = data.into_iter().map(each);
+
+            PrdBase::from_plan_cost_holder_data(
+                plan,
+                cost_holder,
+                PhantomSizeSkippableIterator::new_skip(result_to_skip),
+            )
+        } else {
+            let (real, data) = self.real_data_moved();
+
+            let result = data.into_iter().map(each);
+
+            PrdBase::from_real_data(real, PhantomSizeSkippableIterator::new_pass_through(result))
         }
     }
 }
@@ -626,6 +724,48 @@ macro_rules! generate_prd_base_proxies {
                     .into()
             }
         }
+
+        impl<
+        PTS: $crate::PrdTypes,
+        T: ::core::marker::Send + ::core::marker::Sized,
+        I: ::core::iter::ExactSizeIterator<Item = T> + ::core::marker::Send
+        >
+        $struct_name<PTS, I> {
+            $vis fn iter_exact_size_map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
+            F: ::core::ops::Fn(T) -> R + ::core::marker::Send>(
+                self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes>::PRDHS as $crate::PlanRealDataHolders<
+                PTS::P,
+                PTS::R,
+                PTS::CT,
+            >>::COST
+            ) -> $struct_name<PTS, impl ::core::iter::Iterator<Item = R> + ::core::marker::Send> {
+                $crate::PrdBase::<PTS, I>::from(self.inner())
+                    .iter_exact_size_map_leaf_uniform_cost_holder_exact_size(each, cost_holder_each)
+                    .inner()
+                    .into()
+            }
+        }
+
+        impl<
+        PTS: $crate::PrdTypes,
+        T: ::core::marker::Send + ::core::marker::Sized,
+        I: ::core::iter::ExactSizeIterator<Item = T> + ::core::marker::Send
+        >
+        $struct_name<PTS, I> {
+            $vis fn iter_exact_size_map_leaf_uniform_cost_holder_exact_size<R: ::core::marker::Send + ::core::marker::Sized,
+            F: ::core::ops::Fn(T) -> R + ::core::marker::Send>(
+                self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes>::PRDHS as $crate::PlanRealDataHolders<
+                PTS::P,
+                PTS::R,
+                PTS::CT,
+            >>::COST
+            ) -> $struct_name<PTS, impl ::core::iter::ExactSizeIterator<Item = R> + ::core::marker::Send> {
+                $crate::PrdBase::<PTS, I>::from(self.inner())
+                    .iter_exact_size_map_leaf_uniform_cost_holder_exact_size(each, cost_holder_each)
+                    .inner()
+                    .into()
+            }
+        }
     };
     ($struct_name:ident) => {
         $crate::generate_prd_base_proxies!(, $struct_name);
@@ -637,6 +777,7 @@ macro_rules! generate_prd_base_proxies {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
 
     #[test]

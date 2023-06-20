@@ -518,6 +518,15 @@ pub trait HasPhantomInitialSize {
     fn phantom_initial_size(&self) -> usize;
 }
 
+/// Indicate how [Iterator::next] works for [SkippableIterator].
+enum SkippableIteratorMode {
+    /// Pass through. [Iterator::next] returns whatever the underlying iterator returns.
+    PassThrough,
+    /// Skip. [Iterator::next] always returns [None].
+    Skip,
+    /// Whether to allow skip. Otherwise it [panic]s on skip. Good for checking of incorrect usage.
+    PanicOnNext,
+}
 /// Used as a result type from our iteration-processing functions, so a function can return an empty
 /// Iterator instead of a given one, yet have the same return type (closure/`impl`) in both cases.
 /// Since iterators are lazy, if instantiated with [`SkippableIterator::new_skip`] or
@@ -527,62 +536,80 @@ pub trait HasPhantomInitialSize {
 /// If `I` is an [ExactSizeIterator], this implements [ExactSizeIterator], too. But, if skippable
 /// (if `skip` is `true`), then [ExactSizeIterator::len] returns the underlying `self.iter.len()`,
 /// even though `next()` returns [None].
-//#[cfg_attr(x86, repr= transparent)]
-//#[cfg_attr(not(debug_assertions), repr(transparent))]
-//#[repr(transparent)]
-pub struct SkippableIterator<T: Send, I: Iterator<Item = T> + Send> {
+pub struct SkippableIterator<T, I: Iterator<Item = T>> {
     iter: I,
     //#[cfg(debug_assertions)]
     /// If true, then we do NOT access `iter`, but act as empty.
-    skip: bool,
-    /// Used only if this instance was instantiated with [SkippableIterator::new_skip_with_phantom_initial_size].
+    mode: SkippableIteratorMode,
+    /// Used only if this instance was instantiated with [SkippableIterator::new_panic_on_next_with_phantom_initial_size].
     phantom_initial_size: usize,
 }
-impl<T: Send, I: Iterator<Item = T> + Send> Iterator for SkippableIterator<T, I> {
+impl<T, I: Iterator<Item = T>> Iterator for SkippableIterator<T, I> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.skip {
-            None
-        } else {
-            self.iter.next()
+        match self.mode {
+            SkippableIteratorMode::PassThrough => self.iter.next(),
+            SkippableIteratorMode::Skip => None,
+            SkippableIteratorMode::PanicOnNext => unsupported!(),
         }
     }
 }
 unsafe impl<T: Send, I: Iterator<Item = T> + Send> Send for SkippableIterator<T, I> {}
 
-impl<T: Send, I: Iterator<Item = T> + Send> SkippableIterator<T, I> {
-    pub fn new(iter: I, skip: bool, phantom_initial_size: usize) -> Self {
+impl<T, I: Iterator<Item = T>> SkippableIterator<T, I> {
+    fn new(iter: I, mode: SkippableIteratorMode, phantom_initial_size: usize) -> Self {
         Self {
             iter,
-            skip,
+            mode,
             phantom_initial_size,
         }
     }
     pub fn new_pass_through(iter: I) -> Self {
-        Self::new(iter, false, 0)
+        Self::new(iter, SkippableIteratorMode::PassThrough, 0)
     }
     pub fn new_skip(iter: I) -> Self {
-        Self::new(iter, true, 0)
+        Self::new(iter, SkippableIteratorMode::Skip, 0)
     }
 }
-/// We DO return the underlying size, even if we are skipping any items (if `skip` is `true`).
-impl<T: Send, I: ExactSizeIterator<Item = T> + Send> ExactSizeIterator for SkippableIterator<T, I> {
+/// We return the underlying size, but only if we are not skipping any items. Otherwise we return
+/// `0` (or, if instantiated with [SkippableIterator::new_panic_on_next_with_phantom_initial_size],
+/// we panic).
+impl<T, I: ExactSizeIterator<Item = T>> ExactSizeIterator for SkippableIterator<T, I> {
     fn len(&self) -> usize {
-        self.iter.len()
+        match self.mode {
+            SkippableIteratorMode::PassThrough => self.iter.len(),
+            SkippableIteratorMode::Skip => 0,
+            SkippableIteratorMode::PanicOnNext => unsupported!(),
+        }
     }
 }
-impl<T: Send, I: ExactSizeIterator<Item = T> + Send> SkippableIterator<T, I> {
+impl<T, I: ExactSizeIterator<Item = T>> SkippableIterator<T, I> {
     pub fn new_skip_with_phantom_initial_size(iter: I, phantom_initial_size: usize) -> Self {
-        Self::new(iter, true, phantom_initial_size)
+        Self::new(iter, SkippableIteratorMode::Skip, phantom_initial_size)
+    }
+    pub fn new_panic_on_next_with_phantom_initial_size(
+        iter: I,
+        phantom_initial_size: usize,
+    ) -> Self {
+        Self::new(
+            iter,
+            SkippableIteratorMode::PanicOnNext,
+            phantom_initial_size,
+        )
     }
 }
-impl<T: Send, I: ExactSizeIterator<Item = T> + Send> HasPhantomInitialSize
+impl<T, I: ExactSizeIterator<Item = T>> HasPhantomInitialSize
     for SkippableIterator<T, I>
 {
     fn phantom_initial_size(&self) -> usize {
         self.phantom_initial_size
     }
+}
+// @TODO use
+pub trait PhantomSizeIterator: ExactSizeIterator<Item = Self::T> + HasPhantomInitialSize {
+    /// Item type. See [Iterator].
+    type T;
 }
 
 // Can't have the following:
@@ -637,7 +664,12 @@ impl<PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> PrdBase<PTS, 
     }
 }
 
-impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdBase<PTS, I> {
+impl<
+        PTS: PrdTypes,
+        T: Send + Sized,
+        I: ExactSizeIterator<Item = T> + Send + HasPhantomInitialSize,
+    > PrdBase<PTS, I>
+{
     /// For data sources with exact (known) size, but when the transformation generates an iterator
     /// of an unknown/variable size.
     ///
@@ -679,9 +711,7 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
             PrdBase::from_real_data(real, SkippableIterator::new_pass_through(result))
         }
     }
-}
 
-impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdBase<PTS, I> {
     /// For data sources with exact (known) size, and the transformation generates an iterator of a
     /// known/exact size, too.
     pub fn iter_exact_size_map_leaf_uniform_cost_holder_exact_size<
@@ -695,7 +725,7 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
             PTS::R,
             PTS::CT,
         >>::COST,
-    ) -> PrdBase<PTS, impl ExactSizeIterator<Item = R> + Send> {
+    ) -> PrdBase<PTS, impl ExactSizeIterator<Item = R> + Send + HasPhantomInitialSize> {
         let len = self.data().len();
         self.advise_data_len(len);
 
@@ -731,7 +761,7 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
             PrdBase::from_plan_cost_holder_data(
                 plan,
                 cost_holder,
-                SkippableIterator::new_skip(result_to_skip),
+                SkippableIterator::new_panic_on_next_with_phantom_initial_size(result_to_skip, len),
             )
         } else {
             let (real, data) = self.real_data_moved();
@@ -810,7 +840,7 @@ macro_rules! generate_prd_base_proxies {
         impl<
         PTS: $crate::PrdTypes,
         T: ::core::marker::Send + ::core::marker::Sized,
-        I: ::core::iter::ExactSizeIterator<Item = T> + ::core::marker::Send
+        I: ::core::iter::ExactSizeIterator<Item = T> + ::core::marker::Send + $crate::HasPhantomInitialSize
         >
         $struct_name<PTS, I> {
             $vis fn iter_exact_size_map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
@@ -822,18 +852,11 @@ macro_rules! generate_prd_base_proxies {
             >>::COST
             ) -> $struct_name<PTS, impl ::core::iter::Iterator<Item = R> + ::core::marker::Send> {
                 $crate::PrdBase::<PTS, I>::from(self.inner())
-                    .iter_exact_size_map_leaf_uniform_cost_holder_exact_size(each, cost_holder_each)
+                    .iter_exact_size_map_leaf_uniform_cost_holder(each, cost_holder_each)
                     .inner()
                     .into()
             }
-        }
 
-        impl<
-        PTS: $crate::PrdTypes,
-        T: ::core::marker::Send + ::core::marker::Sized,
-        I: ::core::iter::ExactSizeIterator<Item = T> + ::core::marker::Send
-        >
-        $struct_name<PTS, I> {
             $vis fn iter_exact_size_map_leaf_uniform_cost_holder_exact_size<R: ::core::marker::Send + ::core::marker::Sized,
             F: ::core::ops::Fn(T) -> R + ::core::marker::Send>(
                 self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes>::PRDHS as $crate::PlanRealDataHolders<
@@ -841,7 +864,7 @@ macro_rules! generate_prd_base_proxies {
                 PTS::R,
                 PTS::CT,
             >>::COST
-            ) -> $struct_name<PTS, impl ::core::iter::ExactSizeIterator<Item = R> + ::core::marker::Send> {
+            ) -> $struct_name<PTS, impl ::core::iter::ExactSizeIterator<Item = R> + ::core::marker::Send + $crate::HasPhantomInitialSize> {
                 $crate::PrdBase::<PTS, I>::from(self.inner())
                     .iter_exact_size_map_leaf_uniform_cost_holder_exact_size(each, cost_holder_each)
                     .inner()

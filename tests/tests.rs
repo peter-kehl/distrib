@@ -284,6 +284,11 @@ impl<
         let being_planned = self.being_planned();
         self.iter_exact_size_map_leaf_uniform_cost_holder_exact_size(
             move |v| format!("{prefix}{v}"),
+            // @TODO into a closure, move up. The `else` branch is what matters for production -
+            // then cost calculation is skipped. Factor out into a closure-accepting funtion.
+            //
+            // Also, instead of listing Cost {...} constructor, take |c: &mut Cost| and chain-call
+            // functions like cpu(&mut self, new_cpu_value: f32) -> Self.
             if being_planned {
                 <PtsCost<PTS>>::from_cost(Cost {
                     cpu: 1.0,

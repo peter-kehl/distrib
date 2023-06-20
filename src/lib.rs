@@ -61,6 +61,7 @@ impl Default for Cost {
 }
 unsafe impl Send for Cost {}
 
+#[macro_export]
 macro_rules! unsupported {
     () => {
         unimplemented!("Not supposed to be used.")
@@ -75,6 +76,9 @@ pub trait PlanRealData<P: Plan, R: Real, D: Send + Sized>: Send + Sized {
         unsupported!()
     }
     fn real_mut(&mut self) -> &mut R {
+        unsupported!()
+    }
+    fn data(&self) -> &D {
         unsupported!()
     }
     fn data_mut(&mut self) -> &mut D {
@@ -100,6 +104,9 @@ pub trait RealHolder<R: Real>: Send + Sized {
     }
 }
 pub trait DataHolder<D: Send + Sized>: Send + Sized {
+    fn data(&self) -> &D {
+        unsupported!()
+    }
     fn data_mut(&mut self) -> &mut D {
         unsupported!()
     }
@@ -280,6 +287,9 @@ impl<P: Plan, R: Real, CT: CostTable, PRDHS: PlanRealDataHolders<P, R, CT>, D: S
     pub fn real_mut(&mut self) -> &mut R {
         self.real_holder.real_mut()
     }
+    pub fn data(&self) -> &D {
+        self.data_holder.data()
+    }
     pub fn data_mut(&mut self) -> &mut D {
         self.data_holder.data_mut()
     }
@@ -366,12 +376,19 @@ macro_rules! generate_prd_struct {
             $method_vis fn real_mut(&mut self) -> &mut PTS::R {
                 self.inner.real_holder.real_mut()
             }
+            $method_vis fn data(&self) -> &D {
+                self.inner.data_holder.data()
+            }
             $method_vis fn data_mut(&mut self) -> &mut D {
                 self.inner.data_holder.data_mut()
             }
+
             /// Whether we are in the `Plan` mode (rather than `Process` mode).
             $method_vis fn being_planned(&self) -> ::core::primitive::bool {
                 self.inner.plan_holder.being_planned()
+            }
+            $method_vis fn advise_data_len(&mut self, len: usize) {
+                $crate::unsupported!();
             }
         }
 
@@ -493,6 +510,14 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
     }
 }
 
+/// Carrying a (given) initial data size. Use with implementation of [ExactSizeIterator]. It can be
+/// phantom - that is, if an [ExactSizeIterator] implementation, like [SkippableIterator],
+/// implements [HasPhantomInitialSize], then that [HasPhantomInitialSize::phantom_initial_size] may
+/// differ to the initial [ExactSizeIterator::len()] of that iterator.
+pub trait HasPhantomInitialSize {
+    fn phantom_initial_size(&self) -> usize;
+}
+
 /// Used as a result type from our iteration-processing functions, so a function can return an empty
 /// Iterator instead of a given one, yet have the same return type (closure/`impl`) in both cases.
 /// Since iterators are lazy, if instantiated with [`SkippableIterator::new_skip`] or
@@ -502,12 +527,18 @@ impl<PTS: PrdTypes, T: Send + Sized> PrdBaseVec<PTS, T> {
 /// If `I` is an [ExactSizeIterator], this implements [ExactSizeIterator], too. But, if skippable
 /// (if `skip` is `true`), then [ExactSizeIterator::len] returns the underlying `self.iter.len()`,
 /// even though `next()` returns [None].
-pub struct PhantomSizeSkippableIterator<T: Send, I: Iterator<Item = T> + Send> {
+//#[cfg_attr(x86, repr= transparent)]
+//#[cfg_attr(not(debug_assertions), repr(transparent))]
+//#[repr(transparent)]
+pub struct SkippableIterator<T: Send, I: Iterator<Item = T> + Send> {
     iter: I,
+    //#[cfg(debug_assertions)]
     /// If true, then we do NOT access `iter`, but act as empty.
     skip: bool,
+    /// Used only if this instance was instantiated with [SkippableIterator::new_skip_with_phantom_initial_size].
+    phantom_initial_size: usize,
 }
-impl<T: Send, I: Iterator<Item = T> + Send> Iterator for PhantomSizeSkippableIterator<T, I> {
+impl<T: Send, I: Iterator<Item = T> + Send> Iterator for SkippableIterator<T, I> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -518,24 +549,39 @@ impl<T: Send, I: Iterator<Item = T> + Send> Iterator for PhantomSizeSkippableIte
         }
     }
 }
+unsafe impl<T: Send, I: Iterator<Item = T> + Send> Send for SkippableIterator<T, I> {}
+
+impl<T: Send, I: Iterator<Item = T> + Send> SkippableIterator<T, I> {
+    pub fn new(iter: I, skip: bool, phantom_initial_size: usize) -> Self {
+        Self {
+            iter,
+            skip,
+            phantom_initial_size,
+        }
+    }
+    pub fn new_pass_through(iter: I) -> Self {
+        Self::new(iter, false, 0)
+    }
+    pub fn new_skip(iter: I) -> Self {
+        Self::new(iter, true, 0)
+    }
+}
 /// We DO return the underlying size, even if we are skipping any items (if `skip` is `true`).
-impl<T: Send, I: ExactSizeIterator<Item = T> + Send> ExactSizeIterator
-    for PhantomSizeSkippableIterator<T, I>
-{
+impl<T: Send, I: ExactSizeIterator<Item = T> + Send> ExactSizeIterator for SkippableIterator<T, I> {
     fn len(&self) -> usize {
         self.iter.len()
     }
 }
-
-impl<T: Send, I: Iterator<Item = T> + Send> PhantomSizeSkippableIterator<T, I> {
-    pub fn new(iter: I, skip: bool) -> Self {
-        Self { iter, skip }
+impl<T: Send, I: ExactSizeIterator<Item = T> + Send> SkippableIterator<T, I> {
+    pub fn new_skip_with_phantom_initial_size(iter: I, phantom_initial_size: usize) -> Self {
+        Self::new(iter, true, phantom_initial_size)
     }
-    pub fn new_pass_through(iter: I) -> Self {
-        Self::new(iter, false)
-    }
-    pub fn new_skip(iter: I) -> Self {
-        Self::new(iter, true)
+}
+impl<T: Send, I: ExactSizeIterator<Item = T> + Send> HasPhantomInitialSize
+    for SkippableIterator<T, I>
+{
+    fn phantom_initial_size(&self) -> usize {
+        self.phantom_initial_size
     }
 }
 
@@ -565,19 +611,28 @@ impl<PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> PrdBase<PTS, 
             // @TODO RAM cost: We sum only the output.
             //
             // @TODO At the root level, sum the input data size, too.
-            let result_to_skip = data.into_iter().map(each);
+            //
+            // This is OK - because .map() is LAZY. We only have this to get the correct result
+            // iterator type. The below [PhantomSizeSkippableIterator::new_skip] ensures that we
+            // don't iterate over the original iterator.
+            //
+            // BUT, if that were not .map(), but a custom method, it could have had side effects, or
+            // side costs.
+            //
+            // Alternatively, we could create an empty iterator with a settable (phantom) size.
+            let result_to_skip = data.map(each);
 
             PrdBase::from_plan_cost_holder_data(
                 plan,
                 cost_holder,
-                PhantomSizeSkippableIterator::new_skip(result_to_skip),
+                SkippableIterator::new_skip(result_to_skip),
             )
         } else {
             let (real, data) = self.real_data_moved();
 
-            let result = data.into_iter().map(each);
+            let result = data.map(each);
 
-            PrdBase::from_real_data(real, PhantomSizeSkippableIterator::new_pass_through(result))
+            PrdBase::from_real_data(real, SkippableIterator::new_pass_through(result))
         }
     }
 }
@@ -589,7 +644,7 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
     /// But, if the transformation is 1:1, use
     /// [PrdBase::iter_exact_size_map_leaf_uniform_cost_holder_exact_size] instead.
     pub fn iter_exact_size_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R + Send>(
-        self,
+        mut self,
         each: F,
         cost_holder_each: <<PTS as PrdTypes>::PRDHS as PlanRealDataHolders<
             PTS::P,
@@ -597,6 +652,9 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
             PTS::CT,
         >>::COST,
     ) -> PrdBase<PTS, impl Iterator<Item = R> + Send> {
+        let len = self.data().len();
+        self.advise_data_len(len);
+
         if self.being_planned() {
             let (plan, cost_holder, data) = self.plan_cost_holder_data_moved();
             // @TODO Storage ops: If continuous input & from a sequential source, amortize access
@@ -605,19 +663,20 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
             // @TODO RAM cost: We sum only the output.
             //
             // @TODO At the root level, sum the input data size, too.
-            let result_to_skip = data.into_iter().map(each);
+            let result_to_skip = data.map(each);
 
             PrdBase::from_plan_cost_holder_data(
                 plan,
                 cost_holder,
-                PhantomSizeSkippableIterator::new_skip(result_to_skip),
+                SkippableIterator::new_skip(result_to_skip),
             )
         } else {
             let (real, data) = self.real_data_moved();
+            let len = data.len();
 
-            let result = data.into_iter().map(each);
+            let result = data.map(each);
 
-            PrdBase::from_real_data(real, PhantomSizeSkippableIterator::new_pass_through(result))
+            PrdBase::from_real_data(real, SkippableIterator::new_pass_through(result))
         }
     }
 }
@@ -629,7 +688,7 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
         R: Send + Sized,
         F: Fn(T) -> R + Send,
     >(
-        self,
+        mut self,
         each: F,
         cost_holder_each: <<PTS as PrdTypes>::PRDHS as PlanRealDataHolders<
             PTS::P,
@@ -637,6 +696,9 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
             PTS::CT,
         >>::COST,
     ) -> PrdBase<PTS, impl ExactSizeIterator<Item = R> + Send> {
+        let len = self.data().len();
+        self.advise_data_len(len);
+
         if self.being_planned() {
             let (plan, cost_holder, data) = self.plan_cost_holder_data_moved();
             // @TODO Storage ops: If continuous input & from a sequential source, amortize access
@@ -645,19 +707,39 @@ impl<PTS: PrdTypes, T: Send + Sized, I: ExactSizeIterator<Item = T> + Send> PrdB
             // @TODO RAM cost: We sum only the output.
             //
             // @TODO At the root level, sum the input data size, too.
-            let result_to_skip = data.into_iter().map(each);
+            //
+            // @TODO eliminate this
+            //
+            // AND
+            //
+            // keep the `data` iterator at the higher level, so that we can re-run in Process mode
+            // (instead of Plan mode)
+            //
+            // For that (to keep the `data` iterator at the higher level in Plan mode),
+            // `iter_exact_size_map_leaf_uniform_cost_holder_exact_size` and similar methods have
+            // NOT to consume `self`, but to take `&mut self`. Then we `&mut` borrow `plan`,
+            // `cost_holder` and `data` (out of `&mut self`).
+            //
+            // But, in the `Process/Execute` if-else branch below, we move `real` out of `&mut
+            // self`h. So PrdBase will need to store `real` in an `Option<R>`, so it can be moved
+            // out.
+            //
+            // We do NOT need to invoke `each`, except if it's an inner Iterator. But we'll handle
+            // that in special functions of `PrdBase` instead.
+            let result_to_skip = data.map(each);
 
             PrdBase::from_plan_cost_holder_data(
                 plan,
                 cost_holder,
-                PhantomSizeSkippableIterator::new_skip(result_to_skip),
+                SkippableIterator::new_skip(result_to_skip),
             )
         } else {
             let (real, data) = self.real_data_moved();
+            let len = data.len();
 
-            let result = data.into_iter().map(each);
+            let result = data.map(each);
 
-            PrdBase::from_real_data(real, PhantomSizeSkippableIterator::new_pass_through(result))
+            PrdBase::from_real_data(real, SkippableIterator::new_pass_through(result))
         }
     }
 }

@@ -3,7 +3,7 @@ use core::borrow::Borrow;
 use std::fmt::Display;
 
 use distrib::{
-    Cost, CostHolder, CostTable, DataHolder, HasPhantomInitialSize, Plan, PlanHolder,
+    Cost, CostHolder, CostTable, DataHolder, PhantomSizeIterator, Plan, PlanHolder,
     PlanRealDataHolders, PrdInner, PrdTypes, Real, RealHolder,
 };
 
@@ -200,16 +200,12 @@ impl<'s, T: Borrow<str> + Send, PTS: PrdTypes, I: Iterator<Item = T> + Send> Prd
     }
 }
 
-impl<
-        's,
-        T: Borrow<str> + Send,
-        PTS: PrdTypes,
-        I: ExactSizeIterator<Item = T> + Send + HasPhantomInitialSize,
-    > Prd<PTS, I>
+impl<'s, T: Borrow<str> + Send, PTS: PrdTypes, I: PhantomSizeIterator<Item = T> + Send>
+    Prd<PTS, I>
 {
     pub fn iter_exact_size_map_borrow_str_uppercase_cost_holder(
         self,
-    ) -> Prd<PTS, impl ExactSizeIterator<Item = String> + Send + HasPhantomInitialSize> {
+    ) -> Prd<PTS, impl PhantomSizeIterator<Item = String> + Send> {
         let being_planned = self.being_planned();
 
         self.iter_exact_size_map_leaf_uniform_cost_holder_exact_size(
@@ -280,13 +276,13 @@ impl<
         's,
         PTS: PrdTypes + 's,
         T: Send + Sized + Display + 's,
-        I: ExactSizeIterator<Item = T> + Send + 's + HasPhantomInitialSize,
+        I: PhantomSizeIterator<Item = T> + Send + 's,
     > Prd<PTS, I>
 {
     pub fn iter_exact_size_map_prefix_cost_holder(
         self,
         prefix: &'s str,
-    ) -> Prd<PTS, impl ExactSizeIterator<Item = String> + Send + HasPhantomInitialSize + 's> {
+    ) -> Prd<PTS, impl PhantomSizeIterator<Item = String> + Send + 's> {
         let being_planned = self.being_planned();
         self.iter_exact_size_map_leaf_uniform_cost_holder_exact_size(
             move |v| format!("{prefix}{v}"),

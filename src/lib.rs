@@ -599,18 +599,18 @@ impl<T, I: ExactSizeIterator<Item = T>> SkippableIterator<T, I> {
         )
     }
 }
-impl<T, I: ExactSizeIterator<Item = T>> HasPhantomInitialSize
-    for SkippableIterator<T, I>
-{
+impl<T, I: ExactSizeIterator<Item = T>> HasPhantomInitialSize for SkippableIterator<T, I> {
     fn phantom_initial_size(&self) -> usize {
-        self.phantom_initial_size
+        match self.mode {
+            SkippableIteratorMode::Skip => self.phantom_initial_size,
+            SkippableIteratorMode::PassThrough | SkippableIteratorMode::PanicOnNext => {
+                unsupported!()
+            }
+        }
     }
 }
-// @TODO use
-pub trait PhantomSizeIterator: ExactSizeIterator<Item = Self::T> + HasPhantomInitialSize {
-    /// Item type. See [Iterator].
-    type T;
-}
+pub trait PhantomSizeIterator: ExactSizeIterator + HasPhantomInitialSize {}
+impl<U: ExactSizeIterator + HasPhantomInitialSize> PhantomSizeIterator for U {}
 
 // Can't have the following:
 //
@@ -664,12 +664,7 @@ impl<PTS: PrdTypes, T: Send + Sized, I: Iterator<Item = T> + Send> PrdBase<PTS, 
     }
 }
 
-impl<
-        PTS: PrdTypes,
-        T: Send + Sized,
-        I: ExactSizeIterator<Item = T> + Send + HasPhantomInitialSize,
-    > PrdBase<PTS, I>
-{
+impl<PTS: PrdTypes, T: Send + Sized, I: PhantomSizeIterator<Item = T> + Send> PrdBase<PTS, I> {
     /// For data sources with exact (known) size, but when the transformation generates an iterator
     /// of an unknown/variable size.
     ///
@@ -684,7 +679,7 @@ impl<
             PTS::CT,
         >>::COST,
     ) -> PrdBase<PTS, impl Iterator<Item = R> + Send> {
-        let len = self.data().len();
+        let len = self.data().phantom_initial_size();
         self.advise_data_len(len);
 
         if self.being_planned() {
@@ -704,7 +699,6 @@ impl<
             )
         } else {
             let (real, data) = self.real_data_moved();
-            let len = data.len();
 
             let result = data.map(each);
 
@@ -725,8 +719,8 @@ impl<
             PTS::R,
             PTS::CT,
         >>::COST,
-    ) -> PrdBase<PTS, impl ExactSizeIterator<Item = R> + Send + HasPhantomInitialSize> {
-        let len = self.data().len();
+    ) -> PrdBase<PTS, impl PhantomSizeIterator<Item = R> + Send> {
+        let len = self.data().phantom_initial_size();
         self.advise_data_len(len);
 
         if self.being_planned() {
@@ -765,7 +759,6 @@ impl<
             )
         } else {
             let (real, data) = self.real_data_moved();
-            let len = data.len();
 
             let result = data.map(each);
 
@@ -840,7 +833,7 @@ macro_rules! generate_prd_base_proxies {
         impl<
         PTS: $crate::PrdTypes,
         T: ::core::marker::Send + ::core::marker::Sized,
-        I: ::core::iter::ExactSizeIterator<Item = T> + ::core::marker::Send + $crate::HasPhantomInitialSize
+        I: $crate::PhantomSizeIterator<Item = T> + ::core::marker::Send
         >
         $struct_name<PTS, I> {
             $vis fn iter_exact_size_map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
@@ -864,7 +857,7 @@ macro_rules! generate_prd_base_proxies {
                 PTS::R,
                 PTS::CT,
             >>::COST
-            ) -> $struct_name<PTS, impl ::core::iter::ExactSizeIterator<Item = R> + ::core::marker::Send + $crate::HasPhantomInitialSize> {
+            ) -> $struct_name<PTS, impl $crate::PhantomSizeIterator<Item = R> + ::core::marker::Send> {
                 $crate::PrdBase::<PTS, I>::from(self.inner())
                     .iter_exact_size_map_leaf_uniform_cost_holder_exact_size(each, cost_holder_each)
                     .inner()

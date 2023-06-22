@@ -7,52 +7,68 @@ use core::marker::PhantomData;
 
 /// Estimated plan. It collects expected storage, bandwidth + latency, and computation costs and
 /// constraints.
-pub trait Plan: Send + Sized {}
+pub trait Plan: SendSized {}
 /// Executed plan. It collects actual storage, bandwidth + latency, and computation costs.
-pub trait Real: Send + Sized {}
+pub trait Real: SendSized {}
 
 #[derive(Clone, Copy)]
 pub struct Cost {
-    pub stack: f32,
+    //pub stack: f32,
     pub heap: f32,
     pub cpu: f32,
-    pub gpu: f32,
+    //pub gpu: f32,
     // We could have a field for SSL (since some Intel chipsets accelerate it). But this is likely
     // to be processed after decrypted/before encrypted, anyway.
     pub storage: f32,
     pub bandwidth: f32,
-    pub latency: f32,
-    pub fluctuation: f32,
-    pub reliability: f32,
+    //pub latency: f32,
+    //pub fluctuation: f32,
+    //pub reliability: f32,
 }
 impl Cost {
     pub const fn new(
-        stack: f32,
+        //stack: f32,
         heap: f32,
         cpu: f32,
-        gpu: f32,
+        //gpu: f32,
         storage: f32,
         bandwidth: f32,
-        latency: f32,
-        fluctuation: f32,
-        reliability: f32,
+        //latency: f32,
+        //fluctuation: f32,
+        //reliability: f32,
     ) -> Self {
         Self {
-            stack,
+            //stack,
             heap,
             cpu,
-            gpu,
+            //gpu,
             storage,
             bandwidth,
-            latency,
-            fluctuation,
-            reliability,
+            //latency,
+            //fluctuation,
+            //reliability,
         }
+    }
+    pub fn heap(mut self, heap: f32) -> Self {
+        self.heap = heap;
+        self
+    }
+    pub fn cpu(mut self, cpu: f32) -> Self {
+        self.cpu = cpu;
+        self
+    }
+    pub fn storage(mut self, storage: f32) -> Self {
+        self.storage = storage;
+        self
+    }
+    pub fn bandwidth(&mut self, bandwidth: f32) -> &mut Self {
+        self.bandwidth = bandwidth;
+        self
     }
 }
 #[inline]
 pub const fn default_cost() -> Cost {
-    Cost::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    Cost::new(0.0, 0.0, 0.0, 0.0)
 }
 impl Default for Cost {
     fn default() -> Self {
@@ -60,6 +76,15 @@ impl Default for Cost {
     }
 }
 unsafe impl Send for Cost {}
+
+pub const REAL: bool = true;
+pub const PLAN: bool = false;
+
+// @TODO Consider
+//#[repr(transparent)]
+pub struct CostOf<const IS_REAL: bool> {
+    cost: Cost,
+}
 
 #[macro_export]
 macro_rules! unsupported {
@@ -71,7 +96,7 @@ macro_rules! unsupported {
 /// [Send] is required, so that async runtimes can move the result across threads.
 ///
 /// [PlanRealData] is implemented by this crate's "runtime".
-pub trait PlanRealData<P: Plan, R: Real, D: Send + Sized, const REAL: bool>: Send + Sized {
+pub trait PlanRealData<P: Plan, R: Real, D: SendSized, const IS_REAL: bool>: SendSized {
     fn plan_mut(&mut self) -> &mut P {
         unsupported!()
     }
@@ -89,7 +114,7 @@ pub trait PlanRealData<P: Plan, R: Real, D: Send + Sized, const REAL: bool>: Sen
     }
 }
 
-pub trait PlanHolder<P: Plan, const REAL: bool>: Send + Sized {
+pub trait PlanHolder<P: Plan, const IS_REAL: bool>: SendSized {
     fn plan_mut(&mut self) -> &mut P {
         unsupported!()
     }
@@ -98,7 +123,7 @@ pub trait PlanHolder<P: Plan, const REAL: bool>: Send + Sized {
         unsupported!()
     }
 }
-pub trait RealHolder<R: Real, const REAL: bool>: Send + Sized {
+pub trait RealHolder<R: Real, const IS_REAL: bool>: SendSized {
     fn real_mut(&mut self) -> &mut R {
         unsupported!()
     }
@@ -111,7 +136,7 @@ pub trait DataHolder<D: Send + Sized>: Send + Sized {
         unsupported!()
     }
 }
-pub trait CostTable<const REAL: bool>: Send + Sized {
+pub trait CostTable<const IS_REAL: bool>: Send + Sized {
     /// Indicates that we need only basic [Cost] object.
     fn using_basic_mut(&mut self) {
         unsupported!()
@@ -138,7 +163,7 @@ pub trait CostTable<const REAL: bool>: Send + Sized {
         unsupported!()
     }
 }
-pub trait CostHolder<CT: CostTable<REAL>, const REAL: bool>: Send + Sized {
+pub trait CostHolder<CT: CostTable<IS_REAL>, const IS_REAL: bool>: Send + Sized {
     fn cost_table_mut(&mut self) -> &mut CT {
         unsupported!()
     }
@@ -152,15 +177,25 @@ pub trait CostHolder<CT: CostTable<REAL>, const REAL: bool>: Send + Sized {
         unsupported!()
     }
 }
-//impl<CT: CostTable, T: CostHolder<CT>> From<Cost> for T {}
+// Can't have a blanket impl of From, nor of Into:
+/*impl<U: CostHolder<CT, IS_REAL>, CT: CostTable<IS_REAL>, const IS_REAL: bool> From<Cost> for U {
+    fn from(value: Cost) -> Self {
+        todo!()
+    }
+}
+impl<U: CostHolder<CT, IS_REAL>, CT: CostTable<IS_REAL>, const IS_REAL: bool> Into<U> for Cost {
+    fn into(from: Cost) -> Self {
+        todo!()
+    }
+}*/
 
 // @TODO relax Send + Sized?
-pub trait PlanRealDataHolders<P: Plan, R: Real, CT: CostTable<REAL>, const REAL: bool>:
+pub trait PlanRealDataHolders<P: Plan, R: Real, CT: CostTable<IS_REAL>, const IS_REAL: bool>:
     Send + Sized
 {
-    type PLAN: PlanHolder<P, REAL>;
-    type REAL: RealHolder<R, REAL>;
-    type COST: CostHolder<CT, REAL>;
+    type PLAN: PlanHolder<P, IS_REAL>;
+    type REAL: RealHolder<R, IS_REAL>;
+    type COST: CostHolder<CT, IS_REAL>;
 
     type DATA<D: Send + Sized>: DataHolder<D>;
     /// For Plan mode only. Prefer [PlanRealDataHolders::plan_cost_holder_data_moved] instead.
@@ -205,28 +240,28 @@ const _: () = {
     struct PlanH<P: Plan> {
         _p: PhantomData<P>,
     }
-    impl<P: Plan, const REAL: bool> PlanHolder<P, REAL> for PlanH<P> {}
+    impl<P: Plan, const IS_REAL: bool> PlanHolder<P, IS_REAL> for PlanH<P> {}
     struct RealH<R: Real> {
         _r: PhantomData<R>,
     }
-    impl<R: Real, const REAL: bool> RealHolder<R, REAL> for RealH<R> {}
+    impl<R: Real, const IS_REAL: bool> RealHolder<R, IS_REAL> for RealH<R> {}
     struct DataH<D: Send + Sized> {
         _d: PhantomData<D>,
     }
     impl<D: Send + Sized> DataHolder<D> for DataH<D> {}
 
-    struct CostH<CT: CostTable<REAL>, const REAL: bool> {
+    struct CostH<CT: CostTable<IS_REAL>, const IS_REAL: bool> {
         _ct: PhantomData<CT>,
     }
-    impl<CT: CostTable<REAL>, const REAL: bool> CostHolder<CT, REAL> for CostH<CT, REAL> {}
+    impl<CT: CostTable<IS_REAL>, const IS_REAL: bool> CostHolder<CT, IS_REAL> for CostH<CT, IS_REAL> {}
 
     struct PRDHS {}
-    impl<P: Plan, R: Real, CT: CostTable<REAL>, const REAL: bool>
-        PlanRealDataHolders<P, R, CT, REAL> for PRDHS
+    impl<P: Plan, R: Real, CT: CostTable<IS_REAL>, const IS_REAL: bool>
+        PlanRealDataHolders<P, R, CT, IS_REAL> for PRDHS
     {
         type PLAN = PlanH<P>;
         type REAL = RealH<R>;
-        type COST = CostH<CT, REAL>;
+        type COST = CostH<CT, IS_REAL>;
         type DATA<D: Send + Sized> = DataH<D>;
     }
     assert!(core::mem::size_of::<PRDHS>() == 0);
@@ -237,10 +272,10 @@ const _: () = {
 pub struct PrdInner<
     P: Plan,
     R: Real,
-    CT: CostTable<REAL>,
-    PRDHS: PlanRealDataHolders<P, R, CT, REAL>,
+    CT: CostTable<IS_REAL>,
+    PRDHS: PlanRealDataHolders<P, R, CT, IS_REAL>,
     D: Send + Sized,
-    const REAL: bool,
+    const IS_REAL: bool,
 > {
     _p: PhantomData<P>,
     _r: PhantomData<R>,
@@ -256,29 +291,33 @@ pub struct PrdInner<
 unsafe impl<
         P: Plan,
         R: Real,
-        CT: CostTable<REAL>,
-        PRDHS: PlanRealDataHolders<P, R, CT, REAL>,
+        CT: CostTable<IS_REAL>,
+        PRDHS: PlanRealDataHolders<P, R, CT, IS_REAL>,
         D: Send + Sized,
-        const REAL: bool,
-    > Send for PrdInner<P, R, CT, PRDHS, D, REAL>
+        const IS_REAL: bool,
+    > Send for PrdInner<P, R, CT, PRDHS, D, IS_REAL>
 {
 }
 
 impl<
         P: Plan,
         R: Real,
-        CT: CostTable<REAL>,
-        PRDHS: PlanRealDataHolders<P, R, CT, REAL>,
+        CT: CostTable<IS_REAL>,
+        PRDHS: PlanRealDataHolders<P, R, CT, IS_REAL>,
         D: Send + Sized,
-        const REAL: bool,
-    > PrdInner<P, R, CT, PRDHS, D, REAL>
+        const IS_REAL: bool,
+    > PrdInner<P, R, CT, PRDHS, D, IS_REAL>
 {
     pub fn plan_cost_table_data_moved(self) -> (P, CT, D) {
         PRDHS::plan_cost_table_data_moved(self.plan_holder, self.cost_holder, self.data_holder)
     }
     pub fn plan_cost_holder_data_moved(
         self,
-    ) -> (P, <PRDHS as PlanRealDataHolders<P, R, CT, REAL>>::COST, D) {
+    ) -> (
+        P,
+        <PRDHS as PlanRealDataHolders<P, R, CT, IS_REAL>>::COST,
+        D,
+    ) {
         PRDHS::plan_cost_holder_data_moved(self.plan_holder, self.cost_holder, self.data_holder)
     }
 
@@ -291,7 +330,7 @@ impl<
     }
     pub fn from_plan_cost_holder_data(
         _plan: P,
-        _cost_holder: <PRDHS as PlanRealDataHolders<P, R, CT, REAL>>::COST,
+        _cost_holder: <PRDHS as PlanRealDataHolders<P, R, CT, IS_REAL>>::COST,
         _data: D,
     ) -> Self {
         unsupported!()
@@ -317,16 +356,20 @@ impl<
         self.cost_holder.cost_table_mut()
     }
     /// Whether we are in the `Plan` mode (rather than `Process` mode).
-    pub fn is_plan(&self) -> bool {
+    pub fn is_being_planned(&self) -> bool {
         self.plan_holder.being_planned()
     }
+    // @TODO remove
+    /*pub fn cost_each<F: Fn(Cost) -> Cost>(&self, f: F) -> Cost {
+        todo!()
+    }*/
 }
 
-pub trait PrdTypes<const REAL: bool>: Send + Sized {
+pub trait PrdTypes<const IS_REAL: bool>: Send + Sized {
     type P: Plan;
     type R: Real;
-    type CT: CostTable<REAL>;
-    type PRDHS: PlanRealDataHolders<Self::P, Self::R, Self::CT, REAL>;
+    type CT: CostTable<IS_REAL>;
+    type PRDHS: PlanRealDataHolders<Self::P, Self::R, Self::CT, IS_REAL>;
 }
 
 /*pub trait MoveInnerExact<PTS: PrdTypes, D: Send + Sized> : Sized {
@@ -352,13 +395,13 @@ macro_rules! generate_prd_struct {
         /// This struct exists in user space, so that the user can implement methods on it. That
         /// allows chaining method calls - more ergonomic.
         #[repr(transparent)]
-        $struct_vis struct $struct_name<PTS: $crate::PrdTypes<REAL>, D: ::core::marker::Send + ::core::marker::Sized, const REAL: bool> {
-            $inner_vis inner: $crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, REAL>,
+        $struct_vis struct $struct_name<PTS: $crate::PrdTypes<IS_REAL>, D: ::core::marker::Send + ::core::marker::Sized, const IS_REAL: bool> {
+            $inner_vis inner: $crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, IS_REAL>,
         }
-        unsafe impl<PTS: $crate::PrdTypes<REAL>, D: ::core::marker::Send + ::core::marker::Sized, const REAL: bool> ::core::marker::Send for $struct_name<PTS, D, REAL> {}
+        unsafe impl<PTS: $crate::PrdTypes<IS_REAL>, D: ::core::marker::Send + ::core::marker::Sized, const IS_REAL: bool> ::core::marker::Send for $struct_name<PTS, D, IS_REAL> {}
 
-        impl<PTS: $crate::PrdTypes<REAL>, D: ::core::marker::Send + ::core::marker::Sized, const REAL: bool> $struct_name<PTS, D, REAL> {
-            $method_vis fn new(inner: $crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, REAL>) -> Self {
+        impl<PTS: $crate::PrdTypes<IS_REAL>, D: ::core::marker::Send + ::core::marker::Sized, const IS_REAL: bool> $struct_name<PTS, D, IS_REAL> {
+            $method_vis fn new(inner: $crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, IS_REAL>) -> Self {
                 Self { inner }
             }
             $method_vis fn from_plan_cost_table_data(plan: PTS::P, cost_table: PTS::CT, data: D) -> Self {
@@ -366,7 +409,7 @@ macro_rules! generate_prd_struct {
                 // Self::new(PrdInner<PTS::P, PTS::R, PTS::PRDHS, D>::from_plan_data(plan, data))
                 Self::new($crate::PrdInner::from_plan_cost_table_data(plan, cost_table, data))
             }
-            $method_vis fn from_plan_cost_holder_data(plan: PTS::P, cost_holder: <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT, REAL>>::COST, data: D) -> Self {
+            $method_vis fn from_plan_cost_holder_data(plan: PTS::P, cost_holder: <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT, IS_REAL>>::COST, data: D) -> Self {
                 // @TODO The following (listing generic params) fails!
                 // Self::new(PrdInner<PTS::P, PTS::R, PTS::PRDHS, D>::from_plan_data(plan, data))
                 Self::new($crate::PrdInner::from_plan_cost_holder_data(plan, cost_holder, data))
@@ -376,14 +419,14 @@ macro_rules! generate_prd_struct {
                 Self::new($crate::PrdInner::from_real_data(real, data))
             }
 
-            $method_vis fn inner(self) -> $crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, REAL> {
+            $method_vis fn inner(self) -> $crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, IS_REAL> {
                 self.inner
             }
 
             $method_vis fn plan_cost_table_data_moved(self) -> (PTS::P, PTS::CT, D) {
                 PTS::PRDHS::plan_cost_table_data_moved(self.inner.plan_holder, self.inner.cost_holder, self.inner.data_holder)
             }
-            $method_vis fn plan_cost_holder_data_moved(self) -> (PTS::P, <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT, REAL>>::COST, D) {
+            $method_vis fn plan_cost_holder_data_moved(self) -> (PTS::P, <PTS::PRDHS as PlanRealDataHolders<PTS::P, PTS::R, PTS::CT, IS_REAL>>::COST, D) {
                 PTS::PRDHS::plan_cost_holder_data_moved(self.inner.plan_holder, self.inner.cost_holder, self.inner.data_holder)
             }
 
@@ -410,6 +453,10 @@ macro_rules! generate_prd_struct {
             $method_vis fn advise_data_len(&mut self, len: usize) {
                 $crate::unsupported!();
             }
+            // @TODO remove
+            /*$method_vis fn cost_each<F: ::core::ops::Fn($crate::Cost) -> $crate::Cost>(&self, f: F) -> impl ::core::ops::Fn() -> $crate::Cost {
+                || self.inner.cost_each(f)
+            }*/
         }
 
         /* // Couldn't compile:
@@ -431,8 +478,8 @@ macro_rules! generate_prd_struct {
         /// For interoperability, so that different crates can convert between their implementations
         /// of `Prd` (or the struct named as indicated by `$struct_name` param of
         /// [`distrib::generate_prd_struct`] macro).
-        impl<PTS: $crate::PrdTypes<REAL>, D: ::core::marker::Send + ::core::marker::Sized, const REAL: bool> ::core::convert::From<$crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, REAL>> for $struct_name<PTS, D, REAL> {
-            fn from(value: $crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, REAL>) -> Self {
+        impl<PTS: $crate::PrdTypes<IS_REAL>, D: ::core::marker::Send + ::core::marker::Sized, const IS_REAL: bool> ::core::convert::From<$crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, IS_REAL>> for $struct_name<PTS, D, IS_REAL> {
+            fn from(value: $crate::PrdInner<PTS::P, PTS::R, PTS::CT, PTS::PRDHS, D, IS_REAL>) -> Self {
                 Self::new(value)
             }
         }
@@ -465,7 +512,7 @@ generate_prd_struct!(pub, pub, pub, PrdBase);
 macro_rules! generate_prd_struct_aliases {
     ($vis: vis, $struct_name:ident) => {
         ::paste::paste! {
-            $vis type [<$struct_name Vec>]<PTS, T, const REAL: bool> = $struct_name<PTS, ::alloc::vec::Vec<T>, REAL>;
+            $vis type [<$struct_name Vec>]<PTS, T, const IS_REAL: bool> = $struct_name<PTS, ::alloc::vec::Vec<T>, IS_REAL>;
         }
     };
     ($struct_name:ident) => {
@@ -481,12 +528,12 @@ generate_prd_struct_aliases!(pub, PrdBase);
 fn empty_vec<T>() -> Vec<T> {
     Vec::with_capacity(0)
 }
-impl<PTS: PrdTypes<REAL>, T: Send + Sized, const REAL: bool> PrdBaseVec<PTS, T, REAL> {
+impl<PTS: PrdTypes<IS_REAL>, T: Send + Sized, const IS_REAL: bool> PrdBaseVec<PTS, T, IS_REAL> {
     pub fn map_leaf_uniform_cost_obj<R: Send + Sized, F: Fn(T) -> R>(
         self,
         each: F,
         cost_each: Cost,
-    ) -> PrdBaseVec<PTS, R, REAL> {
+    ) -> PrdBaseVec<PTS, R, IS_REAL> {
         if self.being_planned() {
             let (plan, cost_table, data) = self.plan_cost_table_data_moved();
             // @TODO Storage ops: If continuous input & from a sequential source, amortize access
@@ -507,13 +554,13 @@ impl<PTS: PrdTypes<REAL>, T: Send + Sized, const REAL: bool> PrdBaseVec<PTS, T, 
     pub fn vec_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R>(
         self,
         each: F,
-        cost_holder_each: <<PTS as PrdTypes<REAL>>::PRDHS as PlanRealDataHolders<
+        cost_holder_each: <<PTS as PrdTypes<IS_REAL>>::PRDHS as PlanRealDataHolders<
             PTS::P,
             PTS::R,
             PTS::CT,
-            REAL,
+            IS_REAL,
         >>::COST,
-    ) -> PrdBaseVec<PTS, R, REAL> {
+    ) -> PrdBaseVec<PTS, R, IS_REAL> {
         if self.being_planned() {
             let (plan, cost_holder, data) = self.plan_cost_holder_data_moved();
             // @TODO Storage ops: If continuous input & from a sequential source, amortize access
@@ -559,7 +606,7 @@ enum SkippableIteratorMode {
 /// If `I` is an [ExactSizeIterator], this implements [ExactSizeIterator], too. But, if skippable
 /// (if `skip` is `true`), then [ExactSizeIterator::len] returns the underlying `self.iter.len()`,
 /// even though `next()` returns [None].
-pub struct SkippableIterator<T, I: Iterator<Item = T>, const REAL: bool> {
+pub struct SkippableIterator<T, I: Iterator<Item = T>, const IS_REAL: bool> {
     iter: I,
     //#[cfg(debug_assertions)]
     /// If true, then we do NOT access `iter`, but act as empty.
@@ -567,11 +614,11 @@ pub struct SkippableIterator<T, I: Iterator<Item = T>, const REAL: bool> {
     /// Used only if this instance was instantiated with [SkippableIterator::new_panic_on_next_with_phantom_initial_size].
     phantom_initial_size: usize,
 }
-impl<T, I: Iterator<Item = T>, const REAL: bool> Iterator for SkippableIterator<T, I, REAL> {
+impl<T, I: Iterator<Item = T>, const IS_REAL: bool> Iterator for SkippableIterator<T, I, IS_REAL> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if REAL {
+        if IS_REAL {
             self.iter.next()
         } else {
             match self.mode {
@@ -582,14 +629,14 @@ impl<T, I: Iterator<Item = T>, const REAL: bool> Iterator for SkippableIterator<
         }
     }
 }
-unsafe impl<T: Send, I: Iterator<Item = T> + Send, const REAL: bool> Send
-    for SkippableIterator<T, I, REAL>
+unsafe impl<T: Send, I: Iterator<Item = T> + Send, const IS_REAL: bool> Send
+    for SkippableIterator<T, I, IS_REAL>
 {
 }
 
-impl<T, I: Iterator<Item = T>, const REAL: bool> SkippableIterator<T, I, REAL> {
+impl<T, I: Iterator<Item = T>, const IS_REAL: bool> SkippableIterator<T, I, IS_REAL> {
     fn new(iter: I, mode: SkippableIteratorMode, phantom_initial_size: usize) -> Self {
-        assert_eq!(mode == SkippableIteratorMode::PassThrough, REAL);
+        assert_eq!(mode == SkippableIteratorMode::PassThrough, IS_REAL);
         Self {
             iter,
             mode,
@@ -597,10 +644,10 @@ impl<T, I: Iterator<Item = T>, const REAL: bool> SkippableIterator<T, I, REAL> {
         }
     }
 }
-impl<T, I: Iterator<Item = T>, const REAL: bool> SkippableIterator<T, I, REAL> {
-    /// Use for const generic `REAL` being `false` only. Otherwise this panics. (We make this
-    /// implemented regardless of `REAL`, so that we can use it in the same client code with either
-    /// value of `REAL`.)
+impl<T, I: Iterator<Item = T>, const IS_REAL: bool> SkippableIterator<T, I, IS_REAL> {
+    /// Use for const generic `IS_REAL` being `false` only. Otherwise this panics. (We make this
+    /// implemented regardless of `IS_REAL`, so that we can use it in the same client code with either
+    /// value of `IS_REAL`.)
     pub fn new_pass_through(iter: I) -> Self {
         Self::new(iter, SkippableIteratorMode::PassThrough, 0)
     }
@@ -611,8 +658,8 @@ impl<T, I: Iterator<Item = T>, const REAL: bool> SkippableIterator<T, I, REAL> {
 /// We return the underlying size, but only if we are not skipping any items. Otherwise we return
 /// `0` (or, if instantiated with [SkippableIterator::new_panic_on_next_with_phantom_initial_size],
 /// we panic).
-impl<T, I: ExactSizeIterator<Item = T>, const REAL: bool> ExactSizeIterator
-    for SkippableIterator<T, I, REAL>
+impl<T, I: ExactSizeIterator<Item = T>, const IS_REAL: bool> ExactSizeIterator
+    for SkippableIterator<T, I, IS_REAL>
 {
     fn len(&self) -> usize {
         match self.mode {
@@ -622,14 +669,11 @@ impl<T, I: ExactSizeIterator<Item = T>, const REAL: bool> ExactSizeIterator
         }
     }
 }
-impl<T, I: ExactSizeIterator<Item = T>, const REAL: bool> SkippableIterator<T, I, REAL> {
-    pub fn new_skip_with_phantom_initial_size(iter: I, phantom_initial_size: usize) -> Self {
+impl<T, I: ExactSizeIterator<Item = T>, const IS_REAL: bool> SkippableIterator<T, I, IS_REAL> {
+    pub fn new_with_phantom_skip(iter: I, phantom_initial_size: usize) -> Self {
         Self::new(iter, SkippableIteratorMode::Skip, phantom_initial_size)
     }
-    pub fn new_panic_on_next_with_phantom_initial_size(
-        iter: I,
-        phantom_initial_size: usize,
-    ) -> Self {
+    pub fn new_with_phantom_panic_on_next(iter: I, phantom_initial_size: usize) -> Self {
         Self::new(
             iter,
             SkippableIteratorMode::PanicOnNext,
@@ -637,8 +681,8 @@ impl<T, I: ExactSizeIterator<Item = T>, const REAL: bool> SkippableIterator<T, I
         )
     }
 }
-impl<T, I: ExactSizeIterator<Item = T>, const REAL: bool> HasPhantomInitialSize
-    for SkippableIterator<T, I, REAL>
+impl<T, I: ExactSizeIterator<Item = T>, const IS_REAL: bool> HasPhantomInitialSize
+    for SkippableIterator<T, I, IS_REAL>
 {
     fn phantom_initial_size(&self) -> usize {
         match self.mode {
@@ -649,11 +693,30 @@ impl<T, I: ExactSizeIterator<Item = T>, const REAL: bool> HasPhantomInitialSize
         }
     }
 }
-pub trait PhantomSizeIterator<const REAL: bool>: ExactSizeIterator + HasPhantomInitialSize {}
-impl<U: ExactSizeIterator + HasPhantomInitialSize, const REAL: bool> PhantomSizeIterator<REAL>
+pub trait PhantomSizeIterator<const IS_REAL: bool>:
+    ExactSizeIterator + HasPhantomInitialSize
+{
+}
+impl<U: ExactSizeIterator + HasPhantomInitialSize, const IS_REAL: bool> PhantomSizeIterator<IS_REAL>
     for U
 {
 }
+
+pub trait PhantomSizeSendIterator<const IS_REAL: bool>:
+    PhantomSizeIterator<IS_REAL> + Send
+{
+}
+impl<U: PhantomSizeIterator<IS_REAL> + Send, const IS_REAL: bool> PhantomSizeSendIterator<IS_REAL>
+    for U
+{
+}
+
+// TODO use
+pub trait SendIterator: Iterator + Send {}
+impl<U: Iterator + Send> SendIterator for U {}
+
+pub trait SendSized: Send + Sized {}
+impl<U: Send + Sized> SendSized for U {}
 
 // Can't have the following:
 //
@@ -662,20 +725,24 @@ impl<U: ExactSizeIterator + HasPhantomInitialSize, const REAL: bool> PhantomSize
 // We can have the following, but it doesn't help much:
 //
 // type PrdBaseIter<PTS: PrdTypes, I: Iterator + Send> = PrdBase<PTS, I>;
-impl<PTS: PrdTypes<REAL>, T: Send + Sized, I: Iterator<Item = T> + Send, const REAL: bool>
-    PrdBase<PTS, I, REAL>
+impl<
+        PTS: PrdTypes<IS_REAL>,
+        T: Send + Sized,
+        I: Iterator<Item = T> + Send,
+        const IS_REAL: bool,
+    > PrdBase<PTS, I, IS_REAL>
 {
     /// Used only if the iterator `I` is not an [ExactSizeIterator]. Otherwise use [PrdBase::iter_exact_size_map_leaf_uniform_cost_holder_exact_size], if possible (or [PrdBase::iter_exact_size_map_leaf_uniform_cost_holder] otherwise).
     pub fn iter_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R + Send>(
         self,
         each: F,
-        cost_holder_each: <<PTS as PrdTypes<REAL>>::PRDHS as PlanRealDataHolders<
+        cost_holder_each: <<PTS as PrdTypes<IS_REAL>>::PRDHS as PlanRealDataHolders<
             PTS::P,
             PTS::R,
             PTS::CT,
-            REAL,
+            IS_REAL,
         >>::COST,
-    ) -> PrdBase<PTS, impl Iterator<Item = R> + Send, REAL> {
+    ) -> PrdBase<PTS, impl Iterator<Item = R> + Send, IS_REAL> {
         if self.being_planned() {
             let (plan, cost_holder, data) = self.plan_cost_holder_data_moved();
             // @TODO Storage ops: If continuous input & from a sequential source, amortize access
@@ -698,7 +765,7 @@ impl<PTS: PrdTypes<REAL>, T: Send + Sized, I: Iterator<Item = T> + Send, const R
             PrdBase::from_plan_cost_holder_data(
                 plan,
                 cost_holder,
-                SkippableIterator::<_, _, REAL>::new_skip(result_to_skip),
+                SkippableIterator::<_, _, IS_REAL>::new_skip(result_to_skip),
             )
         } else {
             let (real, data) = self.real_data_moved();
@@ -711,11 +778,11 @@ impl<PTS: PrdTypes<REAL>, T: Send + Sized, I: Iterator<Item = T> + Send, const R
 }
 
 impl<
-        PTS: PrdTypes<REAL>,
+        PTS: PrdTypes<IS_REAL>,
         T: Send + Sized,
-        I: PhantomSizeIterator<REAL, Item = T> + Send,
-        const REAL: bool,
-    > PrdBase<PTS, I, REAL>
+        I: PhantomSizeSendIterator<IS_REAL, Item = T>,
+        const IS_REAL: bool,
+    > PrdBase<PTS, I, IS_REAL>
 {
     /// For data sources with exact (known) size, but when the transformation generates an iterator
     /// of an unknown/variable size.
@@ -725,13 +792,13 @@ impl<
     pub fn iter_exact_size_map_leaf_uniform_cost_holder<R: Send + Sized, F: Fn(T) -> R + Send>(
         mut self,
         each: F,
-        cost_holder_each: <<PTS as PrdTypes<REAL>>::PRDHS as PlanRealDataHolders<
+        cost_holder_each: <<PTS as PrdTypes<IS_REAL>>::PRDHS as PlanRealDataHolders<
             PTS::P,
             PTS::R,
             PTS::CT,
-            REAL,
+            IS_REAL,
         >>::COST,
-    ) -> PrdBase<PTS, impl Iterator<Item = R> + Send, REAL> {
+    ) -> PrdBase<PTS, impl Iterator<Item = R> + Send, IS_REAL> {
         let len = self.data().phantom_initial_size();
         self.advise_data_len(len);
 
@@ -748,7 +815,7 @@ impl<
             PrdBase::from_plan_cost_holder_data(
                 plan,
                 cost_holder,
-                SkippableIterator::<_, _, REAL>::new_skip(result_to_skip),
+                SkippableIterator::<_, _, IS_REAL>::new_skip(result_to_skip),
             )
         } else {
             let (real, data) = self.real_data_moved();
@@ -767,13 +834,13 @@ impl<
     >(
         mut self,
         each: F,
-        cost_holder_each: <<PTS as PrdTypes<REAL>>::PRDHS as PlanRealDataHolders<
+        cost_holder_each: impl Fn() -> <<PTS as PrdTypes<IS_REAL>>::PRDHS as PlanRealDataHolders<
             PTS::P,
             PTS::R,
             PTS::CT,
-            REAL,
+            IS_REAL,
         >>::COST,
-    ) -> PrdBase<PTS, impl PhantomSizeIterator<REAL, Item = R> + Send, REAL> {
+    ) -> PrdBase<PTS, impl PhantomSizeSendIterator<IS_REAL, Item = R>, IS_REAL> {
         let len = self.data().phantom_initial_size();
         self.advise_data_len(len);
 
@@ -809,7 +876,7 @@ impl<
             PrdBase::from_plan_cost_holder_data(
                 plan,
                 cost_holder,
-                SkippableIterator::<_, _, REAL>::new_panic_on_next_with_phantom_initial_size(
+                SkippableIterator::<_, _, IS_REAL>::new_with_phantom_panic_on_next(
                     result_to_skip,
                     len,
                 ),
@@ -839,12 +906,12 @@ impl<
 #[macro_export]
 macro_rules! generate_prd_base_proxies {
     ($vis:vis, $struct_name:ident) => {
-        impl<PTS: $crate::PrdTypes<REAL>, T: ::core::marker::Send + ::core::marker::Sized, const REAL: bool> $struct_name<PTS, ::alloc::vec::Vec<T>, REAL> {
+        impl<PTS: $crate::PrdTypes<IS_REAL>, T: ::core::marker::Send + ::core::marker::Sized, const IS_REAL: bool> $struct_name<PTS, ::alloc::vec::Vec<T>, IS_REAL> {
             $vis fn map_leaf_uniform_cost_obj<R: ::core::marker::Send + ::core::marker::Sized,
             F: ::core::ops::Fn(T) -> R>(
                 self, each: F, cost_each: $crate::Cost
-            ) -> $struct_name<PTS, ::alloc::vec::Vec<R>, REAL> {
-                $crate::PrdBaseVec::<PTS, T, REAL>::from(self.inner())
+            ) -> $struct_name<PTS, ::alloc::vec::Vec<R>, IS_REAL> {
+                $crate::PrdBaseVec::<PTS, T, IS_REAL>::from(self.inner())
                     .map_leaf_uniform_cost_obj(each, cost_each)
                     .inner()
                     .into()
@@ -853,14 +920,14 @@ macro_rules! generate_prd_base_proxies {
             $vis fn vec_map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
             F: ::core::ops::Fn(T) -> R>(
                 self, each: F,
-                cost_holder_each: <<PTS as $crate::PrdTypes<REAL>>::PRDHS as $crate::PlanRealDataHolders<
+                cost_holder_each: <<PTS as $crate::PrdTypes<IS_REAL>>::PRDHS as $crate::PlanRealDataHolders<
                 PTS::P,
                 PTS::R,
                 PTS::CT,
-                REAL
+                IS_REAL
             >>::COST
-            ) -> $struct_name<PTS, ::alloc::vec::Vec<R>, REAL> {
-                $crate::PrdBaseVec::<PTS, T, REAL>::from(self.inner())
+            ) -> $struct_name<PTS, ::alloc::vec::Vec<R>, IS_REAL> {
+                $crate::PrdBaseVec::<PTS, T, IS_REAL>::from(self.inner())
                     .vec_map_leaf_uniform_cost_holder(each, cost_holder_each)
                     .inner()
                     .into()
@@ -868,22 +935,22 @@ macro_rules! generate_prd_base_proxies {
         }
 
         impl<
-        PTS: $crate::PrdTypes<REAL>,
+        PTS: $crate::PrdTypes<IS_REAL>,
         T: ::core::marker::Send + ::core::marker::Sized,
         I: ::core::iter::Iterator<Item = T> + ::core::marker::Send,
-        const REAL: bool
+        const IS_REAL: bool
         >
-        $struct_name<PTS, I, REAL> {
+        $struct_name<PTS, I, IS_REAL> {
             $vis fn iter_map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
             F: ::core::ops::Fn(T) -> R + ::core::marker::Send>(
-                self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes<REAL>>::PRDHS as $crate::PlanRealDataHolders<
+                self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes<IS_REAL>>::PRDHS as $crate::PlanRealDataHolders<
                 PTS::P,
                 PTS::R,
                 PTS::CT,
-                REAL
+                IS_REAL
             >>::COST
-            ) -> $struct_name<PTS, impl ::core::iter::Iterator<Item = R> + ::core::marker::Send, REAL> {
-                $crate::PrdBase::<PTS, I, REAL>::from(self.inner())
+            ) -> $struct_name<PTS, impl ::core::iter::Iterator<Item = R> + ::core::marker::Send, IS_REAL> {
+                $crate::PrdBase::<PTS, I, IS_REAL>::from(self.inner())
                     .iter_map_leaf_uniform_cost_holder(each, cost_holder_each)
                     .inner()
                     .into()
@@ -891,22 +958,22 @@ macro_rules! generate_prd_base_proxies {
         }
 
         impl<
-        PTS: $crate::PrdTypes<REAL>,
+        PTS: $crate::PrdTypes<IS_REAL>,
         T: ::core::marker::Send + ::core::marker::Sized,
-        I: $crate::PhantomSizeIterator<REAL, Item = T> + ::core::marker::Send,
-        const REAL: bool
+        I: $crate::PhantomSizeSendIterator<IS_REAL, Item = T>,
+        const IS_REAL: bool
         >
-        $struct_name<PTS, I, REAL> {
+        $struct_name<PTS, I, IS_REAL> {
             $vis fn iter_exact_size_map_leaf_uniform_cost_holder<R: ::core::marker::Send + ::core::marker::Sized,
             F: ::core::ops::Fn(T) -> R + ::core::marker::Send>(
-                self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes<REAL>>::PRDHS as $crate::PlanRealDataHolders<
+                self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes<IS_REAL>>::PRDHS as $crate::PlanRealDataHolders<
                 PTS::P,
                 PTS::R,
                 PTS::CT,
-                REAL
+                IS_REAL
             >>::COST
-            ) -> $struct_name<PTS, impl ::core::iter::Iterator<Item = R> + ::core::marker::Send, REAL> {
-                $crate::PrdBase::<PTS, I, REAL>::from(self.inner())
+            ) -> $struct_name<PTS, impl ::core::iter::Iterator<Item = R> + ::core::marker::Send, IS_REAL> {
+                $crate::PrdBase::<PTS, I, IS_REAL>::from(self.inner())
                     .iter_exact_size_map_leaf_uniform_cost_holder(each, cost_holder_each)
                     .inner()
                     .into()
@@ -914,14 +981,16 @@ macro_rules! generate_prd_base_proxies {
 
             $vis fn iter_exact_size_map_leaf_uniform_cost_holder_exact_size<R: ::core::marker::Send + ::core::marker::Sized,
             F: ::core::ops::Fn(T) -> R + ::core::marker::Send>(
-                self, each: F, cost_holder_each: <<PTS as $crate::PrdTypes<REAL>>::PRDHS as $crate::PlanRealDataHolders<
+                self,
+                each: F,
+                cost_holder_each: impl ::core::ops::Fn() -> <<PTS as $crate::PrdTypes<IS_REAL>>::PRDHS as $crate::PlanRealDataHolders<
                 PTS::P,
                 PTS::R,
                 PTS::CT,
-                REAL
+                IS_REAL
             >>::COST
-            ) -> $struct_name<PTS, impl $crate::PhantomSizeIterator<REAL, Item = R> + ::core::marker::Send, REAL> {
-                $crate::PrdBase::<PTS, I, REAL>::from(self.inner())
+            ) -> $struct_name<PTS, impl $crate::PhantomSizeSendIterator<IS_REAL, Item = R>, IS_REAL> {
+                $crate::PrdBase::<PTS, I, IS_REAL>::from(self.inner())
                     .iter_exact_size_map_leaf_uniform_cost_holder_exact_size(each, cost_holder_each)
                     .inner()
                     .into()
